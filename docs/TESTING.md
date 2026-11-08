@@ -8,12 +8,14 @@
 6. Confirm the response shows an order reference and that no WhatsApp message is sent in mock mode.
 7. Open `/admin/`, sign in and confirm the order appears.
 8. Confirm the order with a test delivery charge. Verify the total equals subtotal plus delivery.
-9. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
-10. Mark dispatched and delivered.
-11. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
-12. Try the admin API without a token; it should return 401.
-13. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
-14. Confirm `/api/health` returns `ok: true`.
+9. Click **Send UPI payment link on WhatsApp** in mock mode. Check that the prefilled message contains an HTTPS localhost `/pay/ORDER_REFERENCE` link and the confirmed amount.
+10. Open the payment link. A confirmed unpaid order should respond with a 302 redirect to `upi://pay` containing the configured UPI ID, payee name, amount, INR currency and order reference. Check that unknown, pending and paid orders do not redirect.
+11. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
+12. Mark dispatched and delivered.
+13. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
+14. Try the admin API without a token; it should return 401.
+15. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
+16. Confirm `/api/health` returns `ok: true`.
 
 ## Not covered by automated tests yet
 
