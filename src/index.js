@@ -98,13 +98,13 @@ async function getProducts(env) {
   const rows = await env.DB.prepare('SELECT id,name,description,active,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
   return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
 }
-async function sendTemplate(env, to, templateName, params) {
+async function sendTemplate(env, to, templateName, params, languageCode = 'en') {
   if (env.WHATSAPP_MODE !== 'meta') return { skipped: true, reason: 'WhatsApp mock mode' };
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID || !templateName) throw new Error('WhatsApp Cloud API is not configured.');
   const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
   const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
     method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ messaging_product:'whatsapp', to, type:'template', template:{ name:templateName, language:{code:'en'}, components:[{type:'body',parameters:params.map(text => ({type:'text',text:String(text)}))}] } })
+    body: JSON.stringify({ messaging_product:'whatsapp', to, type:'template', template:{ name:templateName, language:{code:languageCode}, components:[{type:'body',parameters:params.map(text => ({type:'text',text:String(text)}))}] } })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error?.message || `WhatsApp API error ${response.status}`);
@@ -304,7 +304,7 @@ async function api(request, env) {
         ].join('\\n');
         if(env.WHATSAPP_MODE==='meta') {
           try {
-            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${order.total_amount}`,clean(env.UPI_ID,120),paymentUrl]);
+            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${order.total_amount}`,clean(env.UPI_ID,120),paymentUrl],clean(env.WHATSAPP_TEMPLATE_PAYMENT_LANGUAGE||'en',20));
             await env.DB.prepare('UPDATE orders SET payment_details_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
             await audit(env,'PAYMENT_DETAILS_SENT',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
             return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',paymentUrl,totalAmount:order.total_amount});
