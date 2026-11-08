@@ -217,7 +217,7 @@ async function api(request, env) {
     const unit=pack===250?product.price_250:pack===500?product.price_500:product.price_1000;
     const subtotal=unit*qty; const id=uuid(); const ref=orderRef();
     const optIn=body.whatsappOptIn===true?1:0;
-    const customerId=uuid(), accountRef=`MB-C-${phone}`, timestamp=now();
+    const customerId=uuid(), accountRef=`MB-C-${uuid().slice(0,8).toUpperCase()}`, timestamp=now();
     await env.DB.prepare(`INSERT INTO customers(id,account_ref,phone,display_name,updated_at) VALUES(?,?,?,?,?)
       ON CONFLICT(phone) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at`).bind(customerId,accountRef,phone,name,timestamp).run();
     const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
