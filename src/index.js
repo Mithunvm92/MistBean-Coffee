@@ -44,8 +44,8 @@ function sessionToken(request) {
   const entry = cookie.split(';').map(v => v.trim()).find(v => v.startsWith('mb_admin_session='));
   return entry ? decodeURIComponent(entry.slice('mb_admin_session='.length)) : '';
 }
-function sessionCookie(token, maxAge=28800) {
-  return `mb_admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+function sessionCookie(token, maxAge=28800, secure=true) {
+  return `mb_admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Strict; Max-Age=${maxAge}`;
 }
 async function adminFromRequest(request, env) {
   const token = sessionToken(request);
@@ -265,13 +265,13 @@ async function api(request, env) {
       if(!env.SESSION_SECRET || env.SESSION_SECRET.length<32) return fail('Admin session secret is not configured securely.',503);
       await env.DB.prepare('DELETE FROM admin_login_attempts WHERE ip_hash=?').bind(ipHash).run();
       const token=await createSession(env,env.ADMIN_EMAIL);
-      return json({ok:true,expiresIn:28800},200,{'set-cookie':sessionCookie(token)});
+      return json({ok:true,expiresIn:28800},200,{'set-cookie':sessionCookie(token,28800,url.protocol==='https:')});
     }
     const actor=await adminFromRequest(request,env); if(!actor) return fail('Authentication required.',401);
     if(path==='/api/admin/logout' && method==='POST') {
       const token=sessionToken(request);
       if(token) await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await sha256(token)).run();
-      return json({ok:true},200,{'set-cookie':sessionCookie('',0)});
+      return json({ok:true},200,{'set-cookie':sessionCookie('',0,url.protocol==='https:')});
     }
     if(path==='/api/admin/orders' && method==='GET') {
       const status=url.searchParams.get('status');
