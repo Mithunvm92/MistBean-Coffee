@@ -104,3 +104,207 @@ body[data-theme="dark"] .qr-frame{background:#fff;border-color:#000}
 body[data-theme="dark"] .qr-box,body[data-theme="dark"] .qr-box img,body[data-theme="dark"] .qr-box canvas{background:#fff!important}
 @media(max-width:560px){.nav-tools{gap:7px}.nav-note{display:none}.theme-toggle{padding:7px 9px}.qr-frame{padding:12px;width:min(100%,390px)}}
 
+
+
+/* Customer storefront theme and form accessibility fixes */
+:root { color-scheme: light; }
+body[data-theme="light"] { color-scheme: light; }
+body[data-theme="dark"] { color-scheme: dark; }
+
+/* Keep every form control readable and prevent checkbox inputs from
+   inheriting the full-width text-field treatment. */
+.field input:not([type="checkbox"]):not([type="radio"]),
+.field textarea,
+.field select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 13px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  color-scheme: inherit;
+}
+.field textarea { min-height: 104px; }
+.field input::placeholder,
+.field textarea::placeholder { color: var(--muted); opacity: 1; }
+.field input:focus-visible,
+.field textarea:focus-visible,
+.field select:focus-visible,
+.choice:focus-visible,
+.theme-toggle:focus-visible,
+.primary:focus-visible,
+.secondary:focus-visible,
+.back:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--copper) 65%, transparent);
+  outline-offset: 2px;
+}
+.field input[type="checkbox"],
+.field input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--forest2);
+  flex: 0 0 18px;
+}
+.field.whatsapp-consent { margin-top: 18px; }
+.field.whatsapp-consent label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  cursor: pointer;
+}
+.field.whatsapp-consent label input { flex: 0 0 18px; }
+.field label { color: var(--ink); }
+.field input:disabled,
+.field textarea:disabled,
+.field select:disabled,
+.choice:disabled,
+button:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
+
+/* Theme-aware supporting text, summaries and product options. */
+.hint,
+.disclaimer,
+.nav-note,
+.submark,
+.community-copy p,
+.like-count,
+.product-body p,
+.section-head p { color: var(--muted); }
+.tag { background: var(--sage); color: var(--forest); }
+.mini-spec { background: var(--sage); color: var(--ink); }
+.mini-spec small { color: var(--muted); }
+.mini-spec strong { color: var(--forest); }
+.summary,
+.private-preview { background: var(--sage); color: var(--ink); }
+.sumrow { color: var(--muted); }
+.sumrow.total {
+  color: var(--forest);
+  border-top-color: var(--line);
+}
+.choice {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--line);
+  overflow-wrap: anywhere;
+}
+.choice small { color: var(--muted); }
+.choice.selected {
+  background: var(--sage);
+  border: 2px solid var(--forest2);
+  padding: 12px 8px;
+}
+.choice.selected strong { color: var(--forest); }
+.roast-choice.selected {
+  background: color-mix(in srgb, var(--roast-color) 18%, var(--paper));
+  border-color: var(--roast-color);
+}
+.roast-choice.selected strong { color: var(--ink); }
+.grind-choice.selected {
+  background: color-mix(in srgb, var(--copper) 17%, var(--paper));
+  border-color: var(--copper);
+}
+.grind-choice.selected strong { color: var(--ink); }
+.step-label { color: var(--copper); }
+.back { color: var(--forest); }
+.theme-toggle { color: var(--ink); background: var(--paper); }
+.confirm-card { color: var(--ink); }
+.confirm-card p { color: var(--muted); }
+.private-preview { overflow-wrap: anywhere; }
+.order-heading { color: #fff; }
+.order-heading h1 { color: #fff; }
+.order-heading p { color: #e5ece2; }
+
+/* Dark mode: avoid light hard-coded panels and low-contrast text. */
+body[data-theme="dark"] .mini-spec,
+body[data-theme="dark"] .summary,
+body[data-theme="dark"] .private-preview {
+  background: #2b352e;
+  color: var(--ink);
+}
+body[data-theme="dark"] .choice {
+  background: #252f28;
+  color: var(--ink);
+  border-color: #526052;
+}
+body[data-theme="dark"] .choice small,
+body[data-theme="dark"] .hint,
+body[data-theme="dark"] .disclaimer,
+body[data-theme="dark"] .sumrow,
+body[data-theme="dark"] .product-body p,
+body[data-theme="dark"] .section-head p { color: #c1cbbf; }
+body[data-theme="dark"] .choice.selected {
+  background: #39483b;
+  border-color: #b5c9b0;
+}
+body[data-theme="dark"] .choice.selected strong,
+body[data-theme="dark"] .roast-choice.selected strong,
+body[data-theme="dark"] .grind-choice.selected strong { color: #f4f6f1; }
+body[data-theme="dark"] .roast-choice.selected {
+  background: color-mix(in srgb, var(--roast-color) 30%, #202923);
+}
+body[data-theme="dark"] .grind-choice.selected {
+  background: color-mix(in srgb, var(--copper) 24%, #202923);
+}
+body[data-theme="dark"] .field label,
+body[data-theme="dark"] .field.whatsapp-consent label { color: #e2e9df; }
+body[data-theme="dark"] .field input:not([type="checkbox"]):not([type="radio"]),
+body[data-theme="dark"] .field textarea,
+body[data-theme="dark"] .field select {
+  background: #151d18;
+  color: #f1f4ee;
+  border-color: #58685a;
+}
+body[data-theme="dark"] .field input::placeholder,
+body[data-theme="dark"] .field textarea::placeholder { color: #aebbad; }
+body[data-theme="dark"] .sumrow.total { color: #d8e6d2; }
+body[data-theme="dark"] .tag { background: #344338; color: #e0eadb; }
+body[data-theme="dark"] .community-panel { background: #202923; }
+body[data-theme="dark"] .like-button,
+body[data-theme="dark"] .share-button,
+body[data-theme="dark"] .theme-toggle {
+  background: #2b352e;
+  color: #edf1e9;
+  border-color: #58685a;
+}
+body[data-theme="dark"] .order-heading { background: #344b39; }
+body[data-theme="dark"] .back { color: #d2e0ce; }
+body[data-theme="dark"] .confirm-card { background: #202923; color: #edf1e9; }
+body[data-theme="dark"] .confirm-card p { color: #c1cbbf; }
+body[data-theme="dark"] .private-preview { background: #2b352e; }
+
+/* Responsive purchase form: preserve readable tap targets on phones. */
+@media (max-width: 560px) {
+  .form-card { padding: 16px; }
+  .choice-grid { gap: 8px; }
+  .choice { min-width: 0; padding: 11px 6px; }
+  .choice.selected { padding: 10px 5px; }
+  .choice strong { font-size: 12px; }
+  .choice small { font-size: 10px; line-height: 1.35; }
+  .field { margin: 16px 0; }
+  .field input:not([type="checkbox"]):not([type="radio"]),
+  .field textarea,
+  .field select { font-size: 16px; }
+  .confirm-actions { flex-wrap: wrap; }
+  .confirm-actions button { min-width: 120px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
