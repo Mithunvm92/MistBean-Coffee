@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 
 INSERT OR IGNORE INTO customers(id,account_ref,phone,display_name)
-SELECT 'cust_' || customer_phone, 'MB-C-' || customer_phone, customer_phone, MAX(customer_name)
+SELECT 'cust_' || customer_phone, 'MB-C-' || upper(hex(randomblob(6))), customer_phone, MAX(customer_name)
 FROM orders
 GROUP BY customer_phone;
 
