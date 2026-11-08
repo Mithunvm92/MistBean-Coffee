@@ -132,6 +132,8 @@ function makeInvoicePdf(order, env) {
     `Item: ${order.product_name} ${order.pack_grams}g x ${order.quantity}`,
     `Unit price: INR ${order.unit_price}`, `Subtotal: INR ${order.subtotal}`, `Delivery: INR ${order.delivery_charge}`,
     `Total: INR ${order.total_amount}`, `Payment status: ${order.payment_status}`,
+    `Payment method: UPI`, `Payment reference / UTR: ${order.payment_reference || 'Not recorded'}`,
+    `Payment verified at: ${order.payment_verified_at || 'Not recorded'}`, `Customer account: ${order.customer_account_ref || 'Not assigned'}`,
     ...(env.SELLER_GSTIN ? [`GSTIN: ${env.SELLER_GSTIN}`] : []),
     ...(env.FSSAI_LICENSE_NUMBER ? [`FSSAI Licence/Registration: ${env.FSSAI_LICENSE_NUMBER}`] : []),
   ];
@@ -154,6 +156,7 @@ async function createInvoice(env, order, actor) {
   if (!env.SELLER_LEGAL_NAME || !env.SELLER_ADDRESS || String(env.SELLER_ADDRESS).toLowerCase().includes('update before launch')) throw new Error('Set the verified seller legal name and full address before generating invoices.');
   if (order.payment_status !== 'PAID') throw new Error('Verify payment before generating the invoice.');
   if (!env.INVOICES) throw new Error('Invoice storage (R2) is not configured.');
+  if (order.invoice_number && order.invoice_key) return { invoiceNumber:order.invoice_number, key:order.invoice_key, existing:true };
   let invoiceNumber = order.invoice_number;
   if (!invoiceNumber) {
     const seq = await env.DB.prepare('UPDATE invoice_sequence SET next_number=next_number+1 WHERE id=1 RETURNING next_number-1 AS n').first();
@@ -214,8 +217,12 @@ async function api(request, env) {
     const unit=pack===250?product.price_250:pack===500?product.price_500:product.price_1000;
     const subtotal=unit*qty; const id=uuid(); const ref=orderRef();
     const optIn=body.whatsappOptIn===true?1:0;
-    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,total_amount,customer_whatsapp_opt_in)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,subtotal,optIn).run();
+    const customerId=uuid(), accountRef=`MB-C-${phone}`, timestamp=now();
+    await env.DB.prepare(`INSERT INTO customers(id,account_ref,phone,display_name,updated_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(phone) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at`).bind(customerId,accountRef,phone,name,timestamp).run();
+    const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
+    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,total_amount,customer_whatsapp_opt_in)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,subtotal,optIn).run();
     const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
     await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref});
     if(optIn) await notifyCustomer(env,order,env.WHATSAPP_TEMPLATE_ORDER_RECEIVED,[name,ref,product.name,`${pack}g x ${qty}`,`INR ${subtotal}`]);
@@ -325,8 +332,24 @@ async function api(request, env) {
         const reference=clean(body.reference,80);
         if(reference.length<6)return fail('Enter the UPI transaction reference / UTR (at least 6 characters).');
         if(order.payment_status==='PAID')return fail('Payment is already verified.',409);
-        await env.DB.prepare("UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,updated_at=? WHERE id=?").bind(reference,now(),now(),id).run();
-        await audit(env,'PAYMENT_VERIFIED',id,actor,{reference});
+        const verifiedAt=now(), paymentId=uuid();
+        const results=await env.DB.batch([
+          env.DB.prepare(`INSERT INTO customer_payments(id,customer_id,order_id,amount,currency,payment_method,payment_reference,verified_by,verified_at)
+            SELECT ?,customer_id,id,total_amount,'INR','UPI',?,?,? FROM orders
+            WHERE id=? AND status='CONFIRMED' AND payment_status<>'PAID'`).bind(paymentId,reference,actor,verifiedAt,id),
+          env.DB.prepare(`UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,updated_at=?
+            WHERE id=? AND payment_status<>'PAID' AND EXISTS(SELECT 1 FROM customer_payments WHERE order_id=orders.id AND id=?)`).bind(reference,verifiedAt,verifiedAt,id,paymentId)
+        ]);
+        if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
+        await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
+        const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
+        try {
+          const invoice=await createInvoice(env,paidOrder,actor);
+          await audit(env,'INVOICE_AUTO_GENERATED',id,actor,{invoiceNumber:invoice.invoiceNumber,customerAccountRef:paidOrder.customer_account_ref});
+        } catch(invoiceError) {
+          console.error('Automatic invoice generation failed',invoiceError.message);
+          await audit(env,'INVOICE_AUTO_GENERATION_FAILED',id,actor,{reason:clean(invoiceError.message,200)});
+        }
       } else if(action==='dispatch' || action==='deliver'){
         const status=action==='dispatch'?'DISPATCHED':'DELIVERED';
         if(action==='dispatch' && order.status!=='CONFIRMED')return fail('Only confirmed orders can be dispatched.',409);
