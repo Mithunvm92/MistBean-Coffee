@@ -371,7 +371,23 @@ async function api(request, env) {
           const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`INR ${fresh.total_amount}`]);
         }
       } else if(action==='invoice'){
-        try { await createInvoice(env,order,actor); } catch(e){return fail(e.message,409);}
+        if(order.payment_status!=='PAID')return fail('Verify payment before generating and sending the invoice.',409);
+        if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
+        let invoice;
+        try { invoice = await createInvoice(env,order,actor); } catch(e){return fail(e.message,409);}
+        const invoiceOrder = await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
+        if(env.WHATSAPP_MODE==='meta'){
+          try {
+            await sendInvoiceWhatsApp(env,invoiceOrder,invoice.key);
+            await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
+            await audit(env,'INVOICE_SENT',id,actor,{mode:'meta',invoiceNumber:invoice.invoiceNumber});
+          } catch(e) { return fail(`Invoice generated (${invoice.invoiceNumber}) but WhatsApp delivery failed: ${e.message}`,502); }
+        } else {
+          const message=[`☕ *MistBean Coffee – Invoice*`,`Hello ${invoiceOrder.customer_name},`,`Your invoice ${invoice.invoice_number} for order ${invoiceOrder.order_ref} is ready.`,`Total paid: ₹${invoiceOrder.total_amount}.`,`Please attach the invoice PDF to this WhatsApp message.`,`Thank you for choosing MistBean Coffee!`].join('\\n');
+          await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
+          const whatsappUrl=whatsappChatUrl(invoiceOrder.customer_phone,message);
+          return json({ok:true,order:invoiceOrder,whatsappUrl,manualAttachmentRequired:true});
+        }
       } else if(action==='invoice-send'){
         if(!order.invoice_key)return fail('Generate the invoice first.',409);
         if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
