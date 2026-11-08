@@ -308,3 +308,43 @@ body[data-theme="dark"] .private-preview { background: #2b352e; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+
+/* Dark-theme CTA and footer contrast correction */
+body[data-theme="dark"] .primary,
+body[data-theme="dark"] .primary:visited {
+  background: #b8cbb5;
+  color: #17231a;
+  border-color: #b8cbb5;
+}
+body[data-theme="dark"] .primary:hover {
+  background: #d0dfca;
+  color: #142017;
+}
+body[data-theme="dark"] .secondary {
+  background: transparent;
+  color: #dce8d8;
+  border-color: #a8bda7;
+}
+body[data-theme="dark"] .origin-strip {
+  background: #26372b;
+  color: #edf3e9;
+}
+body[data-theme="dark"] .origin-inner strong {
+  color: #edf3e9;
+}
+body[data-theme="dark"] .origin-inner span {
+  color: #c7d4c3;
+}
+body[data-theme="dark"] footer {
+  background: #111914;
+  color: #d9e4d5;
+}
+body[data-theme="dark"] .social-row,
+body[data-theme="dark"] .social-row span,
+body[data-theme="dark"] .social-row a {
+  color: #d9e4d5;
+}
+body[data-theme="dark"] .legal-note {
+  color: #b9c8b6;
+}
