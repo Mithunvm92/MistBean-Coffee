@@ -166,7 +166,7 @@ async function createInvoice(env, order, actor) {
   if (!env.SELLER_LEGAL_NAME || !env.SELLER_ADDRESS || String(env.SELLER_ADDRESS).toLowerCase().includes('update before launch')) throw new Error('Set the verified seller legal name and full address before generating invoices.');
   if (order.payment_status !== 'PAID') throw new Error('Verify payment before generating the invoice.');
   if (!env.INVOICES) throw new Error('Invoice storage (R2) is not configured.');
-  if (order.invoice_number && order.invoice_key) return { invoiceNumber:order.invoice_number, key:order.invoice_key, existing:true };
+  // Re-render an existing invoice with the latest PDF template without consuming a new invoice number.
   let invoiceNumber = order.invoice_number;
   if (!invoiceNumber) {
     const seq = await env.DB.prepare('UPDATE invoice_sequence SET next_number=next_number+1 WHERE id=1 RETURNING next_number-1 AS n').first();
