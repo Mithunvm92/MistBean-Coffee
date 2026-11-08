@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#263b2e">
+<meta name="description" content="Choose your MistBean coffee and customise your order. Coffee inspired by Coorg, Karnataka.">
+<title>MistBean Coffee | Choose Your Coffee</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topline">TEST MODE · Single-digit test prices · Do not use for commercial orders</div><div class="topline">Coffee inspired by the hills of Coorg · Karnataka</div>
+<header><nav class="nav">
+<a class="logo" href="#" id="homeLogo"><span class="mark">M</span><span><span class="wordmark">MistBean Coffee</span><span class="submark">From the Coorg Hills</span></span></a>
+<div class="nav-tools"><span class="nav-note" id="navNote">Find your everyday coffee</span><button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch to dark mode" title="Switch theme">☾ <span>Dark mode</span></button></div>
+</nav></header>
+
+<main>
+<section class="screen active" id="homeScreen">
+<div class="wrap">
+<div class="hero">
+<div><div class="eyebrow">A better everyday coffee ritual</div><h1>Find your coffee.<br><span style="color:var(--forest2)">Make it yours.</span></h1>
+<p>Explore our Arabica, Robusta and signature House Blend. Choose the coffee that suits your taste, then customise your roast and grind in a few simple clicks.</p>
+</div>
+<div class="hero-art" aria-label="Decorative coffee bean illustration"><i class="bean b1"></i><i class="bean b2"></i><i class="bean b3"></i><div class="art-caption"><strong>From Coorg</strong>Rooted in Karnataka</div></div>
+</div>
+<div class="section-head"><div class="eyebrow">Choose your coffee</div><h2>What would you like today?</h2><p>Select a product to continue to its order page. You can choose roast, bean or powder, pack size and more there.</p></div>
+<div class="product-grid">
+<article class="product">
+<div class="packshot"><div class="pouch"><b>MistBean</b><span>ARABICA</span><small>COORG · KARNATAKA</small></div></div>
+<div class="product-body"><div class="product-title"><h3>Arabica</h3><span class="tag">Aromatic</span></div>
+<p>For a more aromatic, nuanced coffee experience. A lovely choice for a considered everyday cup.</p>
+<div class="mini-specs"><div class="mini-spec"><small>Bean type</small><strong>100% Arabica</strong></div><div class="mini-spec"><small>Character</small><strong>Gentle & aromatic</strong></div></div>
+<div class="price">From ₹1 <small>/ 250 g</small></div><button class="primary choose" data-product="Arabica">Select Arabica →</button></div></article>
+<article class="product">
+<div class="packshot robusta"><div class="pouch" style="background:linear-gradient(100deg,#70533b,#453326)"><b>MistBean</b><span>ROBUSTA</span><small>COORG · KARNATAKA</small></div></div>
+<div class="product-body"><div class="product-title"><h3>Robusta</h3><span class="tag">Bold</span></div>
+<p>For those who enjoy a stronger, fuller-bodied cup with a bold everyday coffee character.</p>
+<div class="mini-specs"><div class="mini-spec"><small>Bean type</small><strong>100% Robusta</strong></div><div class="mini-spec"><small>Character</small><strong>Bold & full-bodied</strong></div></div>
+<div class="price">From ₹4 <small>/ 250 g</small></div><button class="primary choose" data-product="Robusta">Select Robusta →</button></div></article>
+<article class="product">
+<div class="packshot blend"><div class="pouch"><b>MistBean</b><span>HOUSE BLEND</span><small>80% A · 20% R</small></div></div>
+<div class="product-body"><div class="product-title"><h3>House Blend</h3><span class="tag">Signature</span></div>
+<p>Our signature starting recipe combines 80% Arabica and 20% Robusta for a balanced blend.</p>
+<div class="mini-specs"><div class="mini-spec"><small>Blend ratio</small><strong>80% A / 20% R</strong></div><div class="mini-spec"><small>Customise</small><strong>Choose a ratio</strong></div></div>
+<div class="price">From ₹7 <small>/ 250 g</small></div><button class="primary choose" data-product="House Blend">Select House Blend →</button></div></article>
+</div>
+</div>
+<div class="origin-strip"><div class="wrap origin-inner"><strong>From the Coorg hills to your cup.</strong><span>Choose your coffee · Customise your order · Confirm with us on WhatsApp</span></div></div>
+<div class="community-panel"><div class="wrap community-inner"><div class="community-copy"><h2>Enjoying MistBean?</h2><p>Tap like to show your support. Demo likes are counted on this device only.</p></div><div class="community-actions"><button class="like-button" id="likeButton" type="button" aria-pressed="false">♡ Like our coffee</button><span class="like-count" id="likeCount">0 likes on this device</span><button class="share-button" id="shareButton" type="button">↗ Share MistBean</button></div></div></div>
+<footer><div class="wrap">
+ <div class="social-row"><span aria-label="Instagram">◎ Instagram · Coming soon</span><span aria-label="Facebook">f Facebook · Coming soon</span><a href="https://wa.me/919740558594" target="_blank" rel="noopener">WhatsApp</a></div>
+ <div>© <span id="year"></span> MistBean Coffee · Orders are subject to availability and confirmation by MistBean.</div>
+ <div class="legal-note">Business registration and food licence details will be displayed here before commercial launch.</div>
+</div></footer>
+</section>
+
+<section class="screen" id="orderScreen">
+<div class="wrap order-wrap">
+<button class="back" id="backButton">← Back to coffee selection</button>
+<div class="order-heading"><div class="order-thumb" id="orderThumb">MIST<br>BEAN</div><div><div class="step-label">Your coffee selection</div><h1 id="orderTitle">Arabica</h1><p id="orderSubtitle">Customise your coffee below</p></div></div>
+
+<form id="orderForm">
+<div class="form-card">
+<div class="step-label">01 · Your coffee</div><h2>Choose your roast</h2><p class="hint">Select the roast style you prefer.</p>
+<div class="choice-grid three" id="roastChoices">
+<button type="button" class="choice roast-choice roast-light" data-group="roast" data-value="Light roast"><strong>Light</strong><small>Light honey colour</small></button>
+<button type="button" class="choice roast-choice roast-medium selected" data-group="roast" data-value="Medium roast"><strong>Medium</strong><small>Chestnut brown</small></button>
+<button type="button" class="choice roast-choice roast-dark" data-group="roast" data-value="Dark roast"><strong>Dark</strong><small>Deep espresso brown</small></button>
+</div>
+<div class="subsection"><h2>How would you like it?</h2><p class="hint">Choose whole beans or freshly ground coffee.</p>
+<div class="choice-grid two">
+<button type="button" class="choice selected" data-group="form" data-value="Whole beans"><strong>Whole beans</strong><small>Grind fresh at home</small></button>
+<button type="button" class="choice" data-group="form" data-value="Coffee powder"><strong>Coffee powder</strong><small>Ground coffee</small></button>
+</div></div>
+<div class="subsection hidden" id="grindSection"><h2>Choose your grind size</h2><p class="hint">Select the grind that suits your brewing method.</p>
+<div class="choice-grid">
+<button type="button" class="choice grind-choice grind-fine" data-group="grind" data-value="Fine"><span class="grind-particles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><strong>Fine</strong><small>Fine powder · Espresso</small></button>
+<button type="button" class="choice grind-choice grind-medium selected" data-group="grind" data-value="Medium"><span class="grind-particles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><strong>Medium</strong><small>Granulated · Drip / filter</small></button>
+<button type="button" class="choice grind-choice grind-coarse" data-group="grind" data-value="Coarse"><span class="grind-particles" aria-hidden="true"><i></i><i></i><i></i><i></i></span><strong>Coarse</strong><small>Chunky · French press</small></button>
+</div></div>
+</div>
+
+<div class="form-card">
+<div class="step-label">02 · Pack details</div><h2>Select your pack size</h2><p class="hint">Choose the pack you want to order.</p>
+<div class="choice-grid three">
+<button type="button" class="choice selected" data-group="pack" data-value="250"><strong>250 g</strong><small>Small pack</small></button>
+<button type="button" class="choice" data-group="pack" data-value="500"><strong>500 g</strong><small>Value pack</small></button>
+<button type="button" class="choice" data-group="pack" data-value="1000"><strong>1 kg</strong><small>Family pack</small></button>
+</div>
+<div class="subsection"><h2>Quantity</h2><p class="hint">How many packs would you like?</p>
+<div class="choice-grid four">
+<button type="button" class="choice selected" data-group="qty" data-value="1"><strong>1 pack</strong></button>
+<button type="button" class="choice" data-group="qty" data-value="2"><strong>2 packs</strong></button>
+<button type="button" class="choice" data-group="qty" data-value="3"><strong>3 packs</strong></button>
+<button type="button" class="choice" data-group="qty" data-value="4"><strong>4 packs</strong></button>
+</div></div>
+<div class="subsection hidden" id="blendSection"><h2>House Blend ratio</h2><p class="hint">Choose your preferred Arabica and Robusta balance.</p>
+<div class="choice-grid two">
+<button type="button" class="choice selected" data-group="blend" data-value="80% Arabica / 20% Robusta"><strong>80 / 20</strong><small>Signature blend</small></button>
+<button type="button" class="choice" data-group="blend" data-value="70% Arabica / 30% Robusta"><strong>70 / 30</strong><small>More Robusta</small></button>
+<button type="button" class="choice" data-group="blend" data-value="60% Arabica / 40% Robusta"><strong>60 / 40</strong><small>Bold balance</small></button>
+<button type="button" class="choice" data-group="blend" data-value="50% Arabica / 50% Robusta"><strong>50 / 50</strong><small>Equal blend</small></button>
+</div></div>
+</div>
+
+<div class="form-card">
+<div class="step-label">03 · Delivery details</div><h2>Where should we send it?</h2><p class="hint">Only these three details need to be typed manually.</p>
+<div class="field"><label for="customerName">Full name *</label><input id="customerName" name="name" autocomplete="name" required placeholder="Enter your name"></div>
+<div class="field"><label for="customerPhone">Mobile number *</label><input id="customerPhone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" pattern="[0-9]{10}" maxlength="10" required placeholder="10-digit mobile number"></div>
+<div class="field"><label for="address">Full delivery address *</label><textarea id="address" name="address" autocomplete="street-address" required placeholder="House / flat, street, area and landmark"></textarea></div>
+<div class="field"><label for="pincode">Delivery PIN code *</label><input id="pincode" name="pincode" type="text" inputmode="numeric" autocomplete="postal-code" pattern="[0-9]{6}" maxlength="6" required placeholder="Enter 6-digit PIN code"></div>
+<div class="field whatsapp-consent"><label><input id="whatsappOptIn" type="checkbox" required> I agree to receive order confirmation, payment instructions, delivery updates and invoice from MistBean on WhatsApp.</label></div>
+</div>
+
+<div class="form-card">
+<div class="step-label">04 · Order review</div><h2>Your selection</h2>
+<div class="summary">
+<div class="sumrow"><span id="sumProduct">Arabica · 250 g × 1</span><strong id="sumUnit">₹349 each</strong></div>
+<div class="sumrow" id="sumRoast"><span>Roast</span><strong>Medium roast</strong></div>
+<div class="sumrow" id="sumForm"><span>Form</span><strong>Whole beans</strong></div>
+<div class="sumrow hidden" id="sumGrind"><span>Grind</span><strong>Medium</strong></div>
+<div class="sumrow hidden" id="sumBlend"><span>Blend</span><strong>80% Arabica / 20% Robusta</strong></div>
+<div class="sumrow total"><span>Estimated subtotal</span><strong id="sumTotal">₹349</strong></div>
+</div>
+<p class="disclaimer">Delivery charges are not included. These are indicative test prices. We will confirm stock, roast/grind availability, delivery charges and final amount before payment.</p>
+<div class="summary" style="margin-top:16px">
+<strong style="font-size:13px;color:var(--forest)">What happens when you continue?</strong>
+<p class="disclaimer" style="margin:7px 0 0">1. WhatsApp opens with your order and delivery details already filled in.<br>2. Review the message and tap <strong>Send</strong> in WhatsApp.<br>3. MistBean receives your details only after you send that message. Nothing is automatically sent by this website.</p>
+</div>
+<button type="submit" class="primary submit">Review and place order →</button>
+<p class="disclaimer">Your order will be securely submitted to MistBean for confirmation. No payment is collected on this page.</p>
+</div>
+</form>
+</div>
+<footer><div class="wrap">© <span id="year2"></span> MistBean Coffee · Thank you for choosing us.</div></footer>
+</section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="confirm-overlay" id="confirmOverlay" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+ <div class="confirm-card">
+  <div class="eyebrow" id="confirmEyebrow">Order review</div>
+  <h2 id="confirmTitle">Review your order</h2>
+  <p id="confirmMessage">Check your details before placing the order.</p>
+  <div class="private-preview" aria-live="polite">
+   <div><strong>Name:</strong> <span id="previewName"></span></div>
+   <div><strong>Mobile:</strong> <span id="previewPhone"></span></div>
+   <div><strong>Address:</strong> <span id="previewAddress"></span></div>
+   <div><strong>PIN code:</strong> <span id="previewPin"></span></div>
+   <div><strong>Order:</strong> <span id="previewOrder"></span></div>
+  </div>
+  <p class="privacy-note" id="confirmPrivacy">Your order details will be submitted to the MistBean local test database. No WhatsApp message or payment will be sent during local testing.</p>
+  <div class="confirm-actions">
+   <button type="button" class="secondary" id="editOrderButton">Go back</button>
+   <button type="button" class="primary" id="placeOrderButton">Place test order</button>
+   <button type="button" class="primary hidden" id="closeSuccessButton">Continue</button>
+  </div>
+ </div>
+</div>
+<script src="/customer.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "mistbean-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 migrations apply mistbean-db --local",
+    "db:remote": "wrangler d1 migrations apply mistbean-db --remote",
+    "typecheck": "node --check src/index.js && node --check public/customer.js && node --check public/admin/admin.js",
+    "admin:hash": "node scripts/hash-password.js"
+  },
+  "devDependencies": { "wrangler": "^4.45.0" }
+}

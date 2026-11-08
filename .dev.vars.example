@@ -1,0 +1,17 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+ADMIN_EMAIL=owner@example.com
+ADMIN_PASSWORD_HASH=replace_with_pbkdf2_hash
+SESSION_SECRET=replace_with_long_random_secret_at_least_32_chars
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_APP_SECRET=
+WHATSAPP_VERIFY_TOKEN=replace_me
+WHATSAPP_GRAPH_VERSION=v25.0
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_TEMPLATE_PAYMENT=mistbean_payment_request
+WHATSAPP_MODE=mock
+UPI_ID=
+UPI_PAYEE_NAME=MistBean Coffee
+SELLER_LEGAL_NAME=MistBean Coffee
+SELLER_ADDRESS=Update before launch
+SELLER_GSTIN=
+FSSAI_LICENSE_NUMBER=
