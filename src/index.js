@@ -68,6 +68,18 @@ function whatsappChatUrl(phone, message) {
   const digits = String(phone || '').replace(/\D/g, '');
   return `https://wa.me/91${digits}?text=${encodeURIComponent(message)}`;
 }
+function publicBaseUrl(env, requestUrl) {
+  const configured = clean(env.PUBLIC_BASE_URL, 300);
+  const base = new URL(configured || requestUrl.origin);
+  const local = ['localhost', '127.0.0.1'].includes(base.hostname);
+  if (base.protocol !== 'https:' && !local) throw new Error('PUBLIC_BASE_URL must use HTTPS.');
+  if (base.pathname !== '/' || base.search || base.hash || base.username || base.password) throw new Error('PUBLIC_BASE_URL must be an origin only, for example https://mistbeancoffee.in.');
+  if (!configured && !local) throw new Error('Set PUBLIC_BASE_URL to the public HTTPS storefront URL before sending payment links.');
+  return base.origin;
+}
+function makePaymentUrl(env, requestUrl, order) {
+  return `${publicBaseUrl(env, requestUrl)}/pay/${encodeURIComponent(order.order_ref)}`;
+}
 function makeUpiUri(env, order) {
   const upiId = clean(env.UPI_ID, 120);
   if (!upiId || !upiId.includes('@')) throw new Error('Set a valid UPI_ID in local .dev.vars before preparing payment details.');
@@ -76,7 +88,8 @@ function makeUpiUri(env, order) {
     pn: clean(env.UPI_PAYEE_NAME || 'MistBean Coffee', 80),
     am: (Number(order.total_amount) / 1).toFixed(2),
     cu: 'INR',
-    tn: `MistBean ${order.order_ref}`
+    tn: `MistBean ${order.order_ref}`,
+    tr: order.order_ref
   });
   return `upi://pay?${params.toString()}`;
 }
@@ -103,43 +116,6 @@ function whatsappRecipient(phone) {
   if (/^[6-9]\d{9}$/.test(digits)) return `91${digits}`;
   if (/^91[6-9]\d{9}$/.test(digits)) return digits;
   throw new Error('Customer phone number is not a valid Indian WhatsApp number.');
-}
-async function uploadWhatsAppImage(env, imageBytes, filename) {
-  if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID) throw new Error('WhatsApp Cloud API is not configured.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const form = new FormData();
-  form.append('messaging_product', 'whatsapp');
-  form.append('type', 'image/png');
-  form.append('file', new Blob([imageBytes], { type: 'image/png' }), filename);
-  const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/media`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` }, body: form
-  });
-  const data = await response.json();
-  if (!response.ok || !data.id) throw new Error(data?.error?.message || `WhatsApp media upload failed (${response.status}).`);
-  return data.id;
-}
-async function sendPaymentQrTemplate(env, order, upiUri) {
-  if (env.WHATSAPP_MODE !== 'meta') throw new Error('WhatsApp Cloud API is not enabled.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=640x640&format=png&data=${encodeURIComponent(upiUri)}`;
-  const qrResponse = await fetch(qrUrl, { headers: { accept: 'image/png' } });
-  if (!qrResponse.ok) throw new Error('Could not generate the UPI QR image. Please retry.');
-  const imageId = await uploadWhatsAppImage(env, await qrResponse.arrayBuffer(), `mistbean-${order.order_ref}-upi-qr.png`);
-  const templateName = env.WHATSAPP_TEMPLATE_PAYMENT || 'mistbean_payment_request';
-  const bodyParams = [order.customer_name, order.order_ref, `INR ${order.total_amount}`, clean(env.UPI_ID, 120), upiUri];
-  const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp', to: whatsappRecipient(order.customer_phone), type: 'template',
-      template: { name: templateName, language: { code: 'en' }, components: [
-        { type: 'header', parameters: [{ type: 'image', image: { id: imageId } }] },
-        { type: 'body', parameters: bodyParams.map(text => ({ type: 'text', text: String(text) })) }
-      ] }
-    })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `WhatsApp send failed (${response.status}).`);
-  return data;
 }
 async function notifyCustomer(env, order, templateName, params) {
   if (!order.customer_whatsapp_opt_in) return;
@@ -208,6 +184,16 @@ async function sendInvoiceWhatsApp(env, order, key) {
 
 async function api(request, env) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
+  const payMatch = path.match(/^\/pay\/(MB-[A-Z0-9-]+)$/i);
+  if (payMatch && method === 'GET') {
+    const order = await env.DB.prepare('SELECT order_ref,total_amount,status,payment_status FROM orders WHERE order_ref=?').bind(payMatch[1]).first();
+    if (!order) return fail('Payment link not found.', 404);
+    if (order.status !== 'CONFIRMED') return fail('This order is not confirmed for payment.', 409);
+    if (order.payment_status === 'PAID') return fail('This order is already paid.', 409);
+    let upiUri;
+    try { upiUri = makeUpiUri(env, order); } catch (error) { return fail(error.message, 503); }
+    return new Response(null, { status: 302, headers: { ...SECURITY_HEADERS, location: upiUri, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } });
+  }
   if (method === 'GET' && path === '/api/health') return json({ok:true, service:'mistbean-api', time:now()});
   if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env), whatsappMode:env.WHATSAPP_MODE || 'mock'});
   if (method === 'POST' && path === '/api/orders') {
@@ -280,18 +266,6 @@ async function api(request, env) {
       if(token) await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await sha256(token)).run();
       return json({ok:true},200,{'set-cookie':sessionCookie('',0)});
     }
-    const qrMatch=path.match(/^\/api\/admin\/orders\/([\w-]+)\/payment-qr$/);
-    if(qrMatch && method==='GET') {
-      const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(qrMatch[1]).first();
-      if(!order) return fail('Order not found.',404);
-      if(order.status!=='CONFIRMED' || order.payment_status==='PAID') return fail('QR is available only for confirmed unpaid orders.',409);
-      let upiUri; try { upiUri=makeUpiUri(env,order); } catch(e) { return fail(e.message,400); }
-      // QR provider receives UPI ID, payee name, amount and order reference.
-      const imageUrl=`https://api.qrserver.com/v1/create-qr-code/?size=640x640&format=png&data=${encodeURIComponent(upiUri)}`;
-      const image=await fetch(imageUrl,{headers:{accept:'image/png'}});
-      if(!image.ok) return fail('QR image service is temporarily unavailable.',502);
-      return new Response(image.body,{headers:{...SECURITY_HEADERS,'content-type':'image/png','content-disposition':`attachment; filename="mistbean-${order.order_ref}-upi-qr.png"`,'cache-control':'no-store'}});
-    }
     if(path==='/api/admin/orders' && method==='GET') {
       const status=url.searchParams.get('status');
       const rows=status?await env.DB.prepare('SELECT * FROM orders WHERE status=? ORDER BY created_at DESC LIMIT 200').bind(status).all():await env.DB.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200').all();
@@ -313,8 +287,8 @@ async function api(request, env) {
         if(order.status!=='CONFIRMED')return fail('Confirm the order and delivery charge before sending payment details.',409);
         if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
-        let upiUri; try { upiUri=makeUpiUri(env,order); } catch(e) { return fail(e.message,400); }
-        const qrPath=`/api/admin/orders/${id}/payment-qr`;
+        let paymentUrl;
+        try { paymentUrl = makePaymentUrl(env, url, order); } catch(e) { return fail(e.message, 503); }
         const message=[
           `☕ *MistBean Coffee – Payment Request*`,
           `Hello ${order.customer_name},`,
@@ -324,23 +298,21 @@ async function api(request, env) {
           `Delivery fee: ₹${order.delivery_charge}`,
           `*Total payable: ₹${order.total_amount}*`,
           `UPI ID: ${clean(env.UPI_ID,120)}`,
-          `Pay using this UPI link: ${upiUri}`,
-          `I have included the UPI QR image separately. Please scan the attached image to pay.`,
+          `Pay using this secure link: ${paymentUrl}`,
           `After paying, please reply here with your UPI transaction reference (UTR). We will verify the credit before dispatch.`,
           `Thank you, MistBean Coffee`
-        ].join('\n');
+        ].join('\\n');
         if(env.WHATSAPP_MODE==='meta') {
           try {
-            const sent=await sendPaymentQrTemplate(env,order,upiUri);
+            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${order.total_amount}`,clean(env.UPI_ID,120),paymentUrl]);
             await env.DB.prepare('UPDATE orders SET payment_details_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
-            await audit(env,'PAYMENT_DETAILS_SENT_WITH_QR',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
-            return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',qrAttached:true,totalAmount:order.total_amount});
-          } catch(e) { console.error('WhatsApp payment QR send failed',e.message); return fail(`WhatsApp could not send the payment QR: ${e.message}`,502); }
+            await audit(env,'PAYMENT_DETAILS_SENT',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
+            return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',paymentUrl,totalAmount:order.total_amount});
+          } catch(e) { console.error('WhatsApp payment request failed',e.message); return fail(`WhatsApp could not send the payment link: ${e.message}`,502); }
         }
-        const manualMessage=message.replace('I have included the UPI QR image separately. Please scan the attached image to pay.','Please scan the UPI QR image attached to this WhatsApp message, or use the UPI link above.');
-        const chatUrl=whatsappChatUrl(order.customer_phone,manualMessage);
+        const chatUrl=whatsappChatUrl(order.customer_phone,message);
         await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:order.total_amount});
-        return json({ok:true,whatsappUrl:chatUrl,upiUri,qrPath,totalAmount:order.total_amount,manualAttachmentRequired:true});
+        return json({ok:true,whatsappUrl:chatUrl,paymentUrl,totalAmount:order.total_amount});
       } else if(action==='reject'){
         if(order.status!=='PENDING')return fail('Only pending orders can be rejected.',409);
         const reason=clean(body.reason,300); if(!reason)return fail('Please provide a rejection reason.');
@@ -413,7 +385,7 @@ async function api(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url=new URL(request.url);
-    if(url.pathname.startsWith('/api/')) {
+    if(url.pathname.startsWith('/api/') || url.pathname.startsWith('/pay/')) {
       try { return await api(request,env); }
       catch(error){ console.error('API error',error); return fail('An unexpected server error occurred.',500); }
     }
