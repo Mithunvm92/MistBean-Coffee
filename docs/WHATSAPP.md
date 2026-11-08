@@ -48,10 +48,10 @@ The code uses template messages for order and status notifications. Invoice send
 
 The payment sequence is **confirm first, then pay**. An admin confirms stock and delivery charges. Only then can the admin send the payment request. The Worker reads the final total from D1 and creates an HTTPS link in this format: `https://YOUR_DOMAIN/pay/ORDER_REFERENCE`. On a mobile device, opening that link redirects to a `upi://pay` URI with the configured payee, UPI ID, exact confirmed amount, INR currency and order reference. UPI app hand-off depends on the customer's device and installed payment apps.
 
-Create and get approval for a body-only utility template named `mistbean_payment_request` (or set `WHATSAPP_TEMPLATE_PAYMENT` to the exact approved name):
+Use the approved body-only utility template named `mistbean_payment_request` (or set `WHATSAPP_TEMPLATE_PAYMENT` to the exact approved name):
 
 - Category: Utility (Meta makes the final classification)
-- Language: English (`en`)
+- Language: English (`en`). The payment template language is configurable with the Worker variable `WHATSAPP_TEMPLATE_PAYMENT_LANGUAGE`; set it to the exact language code shown for the approved translation in WhatsApp Manager. The default is `en`.
 - Header: None
 - Body: `Hello {{1}}, your MistBean order {{2}} is confirmed. Total payable: {{3}}. UPI ID: {{4}}. Tap this link to pay using your UPI app: {{5}}. After payment, reply with your UTR. We will verify the credit before dispatch. Thank you, MistBean Coffee.`
 - Body parameter order: customer name, order reference, total payable (INR), UPI ID, HTTPS payment URL.
