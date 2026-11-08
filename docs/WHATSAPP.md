@@ -44,23 +44,23 @@ Parameter: invoice number.
 The code uses template messages for order and status notifications. Invoice sending uploads the PDF to Meta media and sends it using the approved document-header template. Confirm template category, language code and current Meta policies in the Business Manager before enabling.
 
 
-### Payment request with QR image (Cloud API mode)
+### UPI payment link (Cloud API and manual mode)
 
-The admin action **Send payment details on WhatsApp** sends the QR as an actual image message only when `WHATSAPP_MODE=meta`. The Worker generates the QR PNG, uploads it to the WhatsApp media endpoint, then sends an approved image-header template to the customer. It does not open a prefilled chat in this mode.
+The payment sequence is **confirm first, then pay**. An admin confirms stock and delivery charges. Only then can the admin send the payment request. The Worker reads the final total from D1 and creates an HTTPS link in this format: `https://YOUR_DOMAIN/pay/ORDER_REFERENCE`. On a mobile device, opening that link redirects to a `upi://pay` URI with the configured payee, UPI ID, exact confirmed amount, INR currency and order reference. UPI app hand-off depends on the customer's device and installed payment apps.
 
-Create and get approval for a template named `mistbean_payment_request` (or set `WHATSAPP_TEMPLATE_PAYMENT` to the exact approved name):
+Create and get approval for a body-only utility template named `mistbean_payment_request` (or set `WHATSAPP_TEMPLATE_PAYMENT` to the exact approved name):
 
 - Category: Utility (Meta makes the final classification)
 - Language: English (`en`)
-- Header: Image
-- Body: `Hello {{1}}, your MistBean order {{2}} is confirmed. Total payable: {{3}}. UPI ID: {{4}}. Use this UPI payment link: {{5}}. After paying, reply with your UTR. We will verify the credit before dispatch.`
-- Body parameter order: customer name, order reference, total payable (INR), UPI ID, UPI URI.
+- Header: None
+- Body: `Hello {{1}}, your MistBean order {{2}} is confirmed. Total payable: {{3}}. UPI ID: {{4}}. Tap this link to pay using your UPI app: {{5}}. After payment, reply with your UTR. We will verify the credit before dispatch. Thank you, MistBean Coffee.`
+- Body parameter order: customer name, order reference, total payable (INR), UPI ID, HTTPS payment URL.
 
-The image header is populated with the generated QR media ID. The approved template is required so the business can initiate the payment message outside the 24-hour customer-service window. The customer must still have opted in. Meta approval and correct template name/language/header/body parameter order are required for successful sending.
+The template must be approved by Meta before Cloud API mode can send it. In `WHATSAPP_MODE=mock`, the admin portal opens a prefilled WhatsApp chat containing the HTTPS payment link; the admin reviews and sends it. Customer WhatsApp opt-in is required for either mode.
 
-Set `WHATSAPP_MODE=meta`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_GRAPH_VERSION`, and `WHATSAPP_TEMPLATE_PAYMENT` as Worker secrets/variables (for local testing, use `.dev.vars`). Never put the token in frontend JavaScript or commit it. With `WHATSAPP_MODE=mock`, the app only opens a prefilled WhatsApp chat; it cannot attach an image automatically and the admin must attach the QR PNG manually.
+Set `PUBLIC_BASE_URL` to the public HTTPS storefront origin (for example `https://mistbeancoffee.in`) before sending live payment links. For local Wrangler development, the Worker may use its localhost origin when `PUBLIC_BASE_URL` is not set. Do not set a path, query string or fragment in `PUBLIC_BASE_URL`.
 
-**QR privacy note:** this implementation currently retrieves the PNG from `api.qrserver.com`. That service receives the UPI URI (UPI ID, payee name, amount and order reference). Before production, replace it with a QR encoder bundled locally in the Worker if you do not want a third party to receive payment URI data.
+The public payment endpoint reveals no customer PII, does not accept an amount or UPI ID from the browser, and only redirects confirmed unpaid orders. It returns an error for unknown, unconfirmed or already-paid orders. The UPI link is not proof of payment: an admin must independently verify the actual bank credit and UTR before marking the order paid. Invoice and dispatch checks remain unchanged.
 
 ## Customer consent and messaging window
 
