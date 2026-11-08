@@ -346,17 +346,23 @@ async function api(request, env) {
         let paymentUrl;
         try { paymentUrl = makePaymentUrl(env, url, order); } catch(e) { return fail(e.message, 503); }
         const message=[
-          `☕ *MistBean Coffee – Payment Request*`,
+          `☕ *MISTBEAN COFFEE*`,
+          `*Payment request*`,
           `Hello ${order.customer_name},`,
-          `Your order ${order.order_ref} is confirmed.`,
-          `Product: ${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
-          `Product amount: ₹${order.subtotal}`,
-          `Delivery fee: ₹${order.delivery_charge}`,
-          `*Total payable: ₹${order.total_amount}*`,
+          `Your order *${order.order_ref}* is confirmed.`,
+          ``,
+          `*ORDER SUMMARY*`,
+          `${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
+          `Products: ₹${order.subtotal}`,
+          `Delivery: ₹${order.delivery_charge}`,
+          `*AMOUNT TO PAY: ₹${order.total_amount}*`,
+          ``,
+          `*PAYMENT*`,
           `UPI ID: ${clean(env.UPI_ID,120)}`,
-          `Pay using this secure link: ${paymentUrl}`,
-          `After paying, please reply here with your UPI transaction reference (UTR). We will verify the credit before dispatch.`,
-          `Thank you, MistBean Coffee`
+          `Pay securely: ${paymentUrl}`,
+          `After payment, share your UPI UTR/reference here. We will verify the payment before dispatch.`,
+          ``,
+          `Thank you for choosing MistBean Coffee.`
         ].join('\\n');
         if(env.WHATSAPP_MODE==='meta') {
           try {
@@ -432,7 +438,15 @@ async function api(request, env) {
             await audit(env,'INVOICE_SENT',id,actor,{mode:'meta',invoiceNumber:invoice.invoiceNumber});
           } catch(e) { return fail(`Invoice generated (${invoice.invoiceNumber}) but WhatsApp delivery failed: ${e.message}`,502); }
         } else {
-          const message=[`☕ *MistBean Coffee – Invoice*`,`Hello ${invoiceOrder.customer_name},`,`Your invoice ${invoice.invoice_number} for order ${invoiceOrder.order_ref} is ready.`,`Total paid: ₹${invoiceOrder.total_amount}.`,`Please attach the invoice PDF to this WhatsApp message.`,`Thank you for choosing MistBean Coffee!`].join('\\n');
+          const message=[
+            `☕ *MISTBEAN COFFEE*`,
+            `*Invoice ready*`,
+            `Hello ${invoiceOrder.customer_name},`,
+            `Your invoice *${invoiceOrder.invoice_number}* for order *${invoiceOrder.order_ref}* is ready.`,
+            `*Amount paid: ₹${invoiceOrder.total_amount}*`,
+            `Please attach the downloaded invoice PDF before sending this message.`,
+            `Thank you for choosing MistBean Coffee.`
+          ].join('\\n');
           await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
           const whatsappUrl=whatsappChatUrl(invoiceOrder.customer_phone,message);
           return json({ok:true,order:invoiceOrder,whatsappUrl,manualAttachmentRequired:true});
@@ -445,7 +459,15 @@ async function api(request, env) {
           try { await sendInvoiceWhatsApp(env,order,order.invoice_key); await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run(); await audit(env,'INVOICE_SENT',id,actor,{mode:'meta'}); }
           catch(e){return fail(e.message,502);}
         } else {
-          const message=[`☕ *MistBean Coffee – Invoice*`,`Hello ${order.customer_name},`,`Your invoice ${order.invoice_number} for order ${order.order_ref} is ready.`,`Total paid: ₹${order.total_amount}.`,`Please find the invoice PDF attached to this WhatsApp message.`,`Thank you for choosing MistBean Coffee!`].join('\n');
+          const message=[
+            `☕ *MISTBEAN COFFEE*`,
+            `*Invoice ready*`,
+            `Hello ${order.customer_name},`,
+            `Your invoice *${order.invoice_number}* for order *${order.order_ref}* is ready.`,
+            `*Amount paid: ₹${order.total_amount}*`,
+            `Please attach the downloaded invoice PDF before sending this message.`,
+            `Thank you for choosing MistBean Coffee.`
+          ].join('\\n');
           const chatUrl=whatsappChatUrl(order.customer_phone,message);
           await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
           return json({ok:true,whatsappUrl:chatUrl,manualAttachmentRequired:true});
