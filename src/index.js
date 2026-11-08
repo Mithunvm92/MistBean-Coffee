@@ -123,40 +123,79 @@ async function notifyCustomer(env, order, templateName, params) {
   catch (error) { console.error('WhatsApp customer notification failed', error.message); }
 }
 
-function pdfEscape(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?'); }
+function pdfEscape(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,' '); }
 function makeInvoicePdf(order, env) {
-  const W=595, cmds=[], coffee=[0.20,0.13,0.09], muted=[0.39,0.36,0.32], cream=[0.97,0.95,0.91], gold=[0.75,0.55,0.30], ink=[0.16,0.15,0.13], green=[0.13,0.39,0.27];
-  const money=v=>'INR '+Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:2});
-  const rect=(x,y,w,h,c)=>cmds.push(c.join(' ')+' rg '+x+' '+y+' '+w+' '+h+' re f');
-  const line=(x,y,x2,y2,c=gold,width=1)=>cmds.push(c.join(' ')+' RG '+width+' w '+x+' '+y+' m '+x2+' '+y2+' l S');
-  const txt=(s,x,y,size=10,font='F1',c=ink)=>cmds.push(c.join(' ')+' rg /'+font+' '+size+' Tf 1 0 0 1 '+x+' '+y+' Tm ('+pdfEscape(s)+') Tj');
-  const wrap=(s,max=76)=>{const out=[];let row='';for(const word of String(s||'').split(/\s+/)){const next=row?row+' '+word:word;if(next.length>max&&row){out.push(row);row=word;}else row=next;}if(row)out.push(row);return out;};
-  const seller=clean(env.SELLER_LEGAL_NAME||'MistBean Coffee',100), address=clean(env.SELLER_ADDRESS||'Seller address to be updated',220);
-  rect(0,690,595,152,coffee);rect(0,686,595,4,gold);
-  txt('MISTBEAN',42,790,25,'F2',[1,1,1]);txt('COFFEE',42,765,11,'F2',[0.91,0.82,0.68]);
-  txt('INVOICE',405,790,22,'F2',[1,1,1]);txt(String(order.invoice_number||''),405,767,10,'F1',[1,1,1]);
-  txt(seller,42,730,11,'F2',[1,1,1]);wrap(address,78).slice(0,2).forEach((v,i)=>txt(v,42,712-i*13,8,'F1',[0.91,0.88,0.82]));
-  txt('BILL TO',42,655,8,'F2',muted);txt(clean(order.customer_name||'Customer',100),42,635,13,'F2',ink);
-  const bill=[ 'Phone: '+clean(order.customer_phone,20), 'Address: '+clean(order.delivery_address,180)+', '+clean(order.pin_code,10) ];
-  let by=617;bill.flatMap(v=>wrap(v,82)).forEach(v=>{txt(v,42,by,9,'F1',muted);by-=13;});
-  rect(390,620,163,54,cream);txt('INVOICE DATE',405,655,7,'F2',muted);txt(now().slice(0,10),405,638,10,'F2',ink);
-  txt('ORDER REFERENCE',405,623,7,'F2',muted);txt(clean(order.order_ref,28),405,608,9,'F2',ink);
-  const top=Math.min(by-16,575);rect(42,top-28,511,28,coffee);
-  txt('DESCRIPTION',54,top-18,8,'F2',[1,1,1]);txt('QTY',365,top-18,8,'F2',[1,1,1]);txt('UNIT PRICE',414,top-18,8,'F2',[1,1,1]);txt('AMOUNT',500,top-18,8,'F2',[1,1,1]);
-  const iy=top-54;txt(clean(order.product_name,70)+' - '+(Number(order.pack_grams)||0)+'g',54,iy+7,10,'F2',ink);
-  txt(String(order.quantity||1),371,iy+7,9,'F1',ink);txt(money(order.unit_price),414,iy+7,8,'F1',ink);txt(money(order.subtotal),500,iy+7,8,'F2',ink);
-  line(42,iy-8,553,iy-8,[0.88,0.85,0.80],0.7);
-  const ty=iy-44;txt('PAYMENT SUMMARY',42,ty,8,'F2',muted);txt('Subtotal',365,ty,9,'F1',muted);txt(money(order.subtotal),490,ty,9,'F1',ink);
-  txt('Delivery',365,ty-22,9,'F1',muted);txt(money(order.delivery_charge),490,ty-22,9,'F1',ink);
-  rect(350,ty-59,203,25,cream);txt('TOTAL PAID',363,ty-50,9,'F2',coffee);txt(money(order.total_amount),478,ty-50,11,'F2',coffee);
-  const py=ty-105;rect(42,py-75,511,65,[0.97,0.97,0.95]);txt('PAYMENT DETAILS',55,py-28,8,'F2',muted);
-  txt('Status: '+clean(order.payment_status||'PAID',20),55,py-48,9,'F2',green);txt('Method: UPI',220,py-48,9,'F1',ink);
-  txt('UTR: '+clean(order.payment_reference||'Not recorded',35),55,py-65,8,'F1',muted);
-  let fy=py-105;if(env.SELLER_GSTIN){txt('GSTIN: '+clean(env.SELLER_GSTIN,40),42,fy,8,'F1',muted);fy-=13;}
-  if(env.FSSAI_LICENSE_NUMBER){txt('FSSAI Licence/Registration: '+clean(env.FSSAI_LICENSE_NUMBER,60),42,fy,8,'F1',muted);fy-=13;}
-  line(42,64,553,64,[0.83,0.77,0.68],0.7);txt('Thank you for choosing MistBean Coffee.',42,45,9,'F2',coffee);
-  txt('Fresh coffee, rooted in Coorg.',42,30,8,'F1',muted);txt('Computer-generated invoice',415,30,7,'F1',muted);
-  const stream='q\n'+cmds.join('\n')+'\nQ';
+  const W=595,H=842,M=42;
+  const C={ink:'0.18 0.13 0.10',brown:'0.20 0.14 0.10',gold:'0.72 0.52 0.30',cream:'0.96 0.94 0.89',pale:'0.985 0.98 0.96',muted:'0.40 0.37 0.34',white:'1 1 1',green:'0.18 0.38 0.27'};
+  const ops=[], y=t=>H-t;
+  const rect=(x,t,w,h,c)=>ops.push(c+' rg '+x+' '+y(t+h)+' '+w+' '+h+' re f');
+  const line=(x1,t1,x2,t2,c=C.gold,w=0.6)=>ops.push(c+' RG '+w+' w '+x1+' '+y(t1)+' m '+x2+' '+y(t2)+' l S');
+  const text=(v,x,t,size=9,font='F1',c=C.ink)=>ops.push(c+' rg BT /'+font+' '+size+' Tf 1 0 0 1 '+x+' '+y(t)+' Tm ('+pdfEscape(v)+') Tj ET');
+  const wrap=(v,n)=>{const words=String(v||'').split(/\s+/),out=[];let row='';for(const word of words){if(!word)continue;const next=row?row+' '+word:word;if(next.length>n&&row){out.push(row);row=word;}else row=next;}if(row)out.push(row);return out;};
+  const block=(v,x,t,o={})=>{const rows=wrap(v,o.maxChars||60).slice(0,o.maxLines||4);rows.forEach((r,i)=>text(r,x,t+i*(o.leading||12),o.size||8.5,o.font||'F1',o.color||C.ink));return rows.length*(o.leading||12);};
+  const money=n=>'INR '+Number(n||0).toLocaleString('en-IN');
+  const sellerName=env.SELLER_LEGAL_NAME||'TEST ONLY - MistBean Proprietor';
+  const sellerAddress=env.SELLER_ADDRESS||'TEST ONLY - Business address pending';
+  const fssai=env.FSSAI_LICENSE_NUMBER||'TEST ONLY - FSSAI details pending';
+  const customerAddress=(order.delivery_address||'')+', '+(order.pin_code||'');
+  const notes=String(order.notes||'');
+  const roast=notes.match(/Roast preference:\s*([^;]+)/i)?.[1]?.trim()||'Not specified';
+  const grind=notes.match(/Grind size:\s*([^;]+)/i)?.[1]?.trim()||'Not specified';
+  const form=String(order.grind_preference||'Not specified');
+  const blend=order.blend_ratio?'Arabica / Robusta ratio '+order.blend_ratio:'Not applicable';
+  const invoiceDate=String(order.payment_verified_at||order.updated_at||now()).slice(0,10);
+  const paymentDate=order.payment_verified_at?String(order.payment_verified_at).replace('T',' ').slice(0,19)+' UTC':'Not recorded';
+  const status=String(order.payment_status||'UNPAID').toUpperCase();
+
+  rect(0,0,W,158,C.brown);rect(0,154,W,4,C.gold);
+  text('MISTBEAN',M,49,27,'F2',C.white);text('COFFEE  |  FROM THE COORG HILLS',M,70,8.5,'F2','0.88 0.76 0.56');
+  text('SALES INVOICE',370,47,19,'F2',C.white);text(order.invoice_number||'DRAFT',370,67,10,'F1',C.white);
+  text('COMMERCIAL INVOICE - UNREGISTERED SUPPLIER',370,84,6.5,'F2','0.88 0.76 0.56');
+  text(sellerName,M,111,10,'F2',C.white);block(sellerAddress,M,125,{size:7.5,maxChars:78,leading:10,color:C.white,maxLines:2});
+  text('FSSAI: '+fssai,M,148,7,'F1',C.white);
+
+  const top=184;
+  text('BILL TO / SHIP TO',M,top,8,'F2',C.gold);text(order.customer_name||'Customer',M,top+19,12,'F2',C.ink);
+  let h=block('Phone: '+(order.customer_phone||'Not recorded'),M,top+34,{size:8.5,maxChars:56,leading:12,maxLines:2});
+  block('Delivery address: '+customerAddress,M,top+34+h,{size:8.2,maxChars:57,leading:12,maxLines:4});
+  rect(365,top-14,188,91,C.cream);text('INVOICE DATE',379,top+4,7,'F2',C.muted);text(invoiceDate,379,top+21,10,'F2',C.ink);
+  text('ORDER REFERENCE',379,top+43,7,'F2',C.muted);text(order.order_ref||'-',379,top+60,9,'F2',C.ink);
+  text('ORDER DATE',379,top+78,7,'F2',C.muted);text(String(order.created_at||'').slice(0,10)||'-',449,top+78,7.5,'F2',C.ink);
+
+  const tableTop=302,x0=M,x1=345,x2=395,x3=465,x4=553;
+  rect(x0,tableTop,511,27,C.brown);text('DESCRIPTION / PRODUCT SPECIFICATIONS',x0+11,tableTop+17,7,'F2',C.white);
+  text('QTY',x1+8,tableTop+17,7,'F2',C.white);text('UNIT PRICE',x2+7,tableTop+17,7,'F2',C.white);text('AMOUNT',x3+12,tableTop+17,7,'F2',C.white);
+  const desc=[(order.product_name||'Coffee')+' - '+Number(order.pack_grams||0)+' g','Roast: '+roast+'  |  Form: '+form];
+  if(form.toLowerCase().includes('ground')||form.toLowerCase().includes('powder'))desc.push('Grind size: '+grind);
+  if(order.blend_ratio)desc.push('Blend ratio: '+blend);
+  desc.forEach((v,i)=>text(v,x0+11,tableTop+48+i*13,i===0?9:7.4,i===0?'F2':'F1',i===0?C.ink:C.muted));
+  text(String(order.quantity||1),x1+17,tableTop+49,8.5,'F1',C.ink);text(money(order.unit_price),x2+5,tableTop+49,8,'F1',C.ink);text(money(order.subtotal),x3+10,tableTop+49,8,'F2',C.ink);
+  const rowBottom=tableTop+62+Math.max(0,desc.length-1)*13;line(x0,rowBottom,x4,rowBottom,'0.84 0.80 0.73',0.7);
+
+  const sumTop=rowBottom+31,sx=370,vx=493;
+  text('PRICE SUMMARY',M,sumTop,8,'F2',C.gold);text('Product subtotal',sx,sumTop,8.5,'F1',C.muted);text(money(order.subtotal),vx,sumTop,8.5,'F1',C.ink);
+  text('Discount',sx,sumTop+19,8.5,'F1',C.muted);text(money(order.discount_amount||0),vx,sumTop+19,8.5,'F1',C.ink);
+  text('Delivery charges',sx,sumTop+38,8.5,'F1',C.muted);text(money(order.delivery_charge),vx,sumTop+38,8.5,'F1',C.ink);
+  line(sx,sumTop+49,553,sumTop+49,'0.82 0.75 0.65',0.6);rect(354,sumTop+56,199,30,C.cream);
+  text('TOTAL AMOUNT',366,sumTop+75,8,'F2',C.brown);text(money(order.total_amount),466,sumTop+75,10,'F2',C.brown);
+  text('GST is not charged by this unregistered seller.',354,sumTop+101,7,'F1',C.muted);
+
+  const panelTop=sumTop+126;rect(M,panelTop,511,79,C.pale);text('PAYMENT DETAILS',M+13,panelTop+17,8,'F2',C.gold);
+  text('Status: '+status,M+13,panelTop+36,8.5,'F2',status==='PAID'?C.green:C.ink);text('Method: UPI',M+205,panelTop+36,8.5,'F1',C.ink);
+  text('Amount received: '+money(status==='PAID'?order.total_amount:0),M+13,panelTop+54,8,'F1',C.ink);
+  text('Verified: '+paymentDate,M+205,panelTop+54,7.5,'F1',C.ink);text('UTR / reference: '+(order.payment_reference||'Not recorded'),M+13,panelTop+70,7.5,'F1',C.muted);
+
+  const fulfilTop=panelTop+96;text('ORDER FULFILMENT',M,fulfilTop,8,'F2',C.gold);
+  text('Order status: '+(order.status||'PENDING'),M,fulfilTop+18,8,'F1',C.ink);text('Courier: '+(order.courier_name||'Not assigned'),M+190,fulfilTop+18,8,'F1',C.ink);
+  text('Tracking ID: '+(order.tracking_id||'Not assigned'),M,fulfilTop+35,8,'F1',C.ink);text('Delivery status: '+(order.status==='DELIVERED'?'Delivered':'See order updates'),M+190,fulfilTop+35,8,'F1',C.ink);
+
+  const footTop=H-66;line(M,footTop-12,553,footTop-12,C.gold,0.8);
+  text('Thank you for choosing MistBean Coffee.',M,footTop+5,9,'F2',C.brown);
+  text('For order support, contact MistBean using the details shared at checkout.',M,footTop+20,7.2,'F1',C.muted);
+  text('TEST DOCUMENT - Seller details and FSSAI data are placeholders pending verification.',M,footTop+36,6.5,'F2','0.55 0.30 0.18');
+  text('This is a commercial sales invoice, not a GST tax invoice.',M,footTop+49,6.5,'F1',C.muted);
+
+  const stream='q\n'+ops.join('\n')+'\nQ';
   const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>','<< /Length '+enc.encode(stream).length+' >>\nstream\n'+stream+'\nendstream'];
   let pdf='%PDF-1.4\n';const offsets=[0];objects.forEach((obj,i)=>{offsets.push(enc.encode(pdf).length);pdf+=(i+1)+' 0 obj\n'+obj+'\nendobj\n';});
   const xref=enc.encode(pdf).length;pdf+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n';offsets.slice(1).forEach(o=>{pdf+=String(o).padStart(10,'0')+' 00000 n \n';});
