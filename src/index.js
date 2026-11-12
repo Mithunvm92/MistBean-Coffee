@@ -60,6 +60,16 @@ async function adminFromRequest(request, env) {
 }
 async function audit(env, action, orderId, actor, details = {}) {
   await env.DB.prepare('INSERT INTO audit_log(id,action,order_id,actor,details_json) VALUES(?,?,?,?,?)').bind(uuid(), action, orderId || null, actor, JSON.stringify(details)).run();
+  if (orderId) await env.DB.prepare('INSERT INTO events(id,order_id,type,detail) VALUES(?,?,?,?)').bind(uuid(), orderId, action, JSON.stringify({ actor, ...details })).run();
+}
+async function uniquePayablePaise(env, orderId, totalRupees) {
+  for (let attempt = 0; attempt < 99; attempt++) {
+    const suffix = 1 + Math.floor(Math.random() * 99);
+    const payable = totalRupees * 100 + suffix;
+    const exists = await env.DB.prepare("SELECT id FROM orders WHERE payable_paise=? AND id<>? AND status NOT IN ('CANCELLED','REJECTED','DELIVERED') AND payment_status<>'PAID'").bind(payable, orderId).first();
+    if (!exists) return { payable, suffix };
+  }
+  throw new Error('Could not allocate a unique payment amount. Please retry.');
 }
 function orderRef() { return `MB-${new Date().toISOString().slice(2,10).replaceAll('-', '')}-${crypto.randomUUID().slice(0,6).toUpperCase()}`; }
 function validPhone(phone) { return /^[6-9]\d{9}$/.test(phone); }
@@ -86,7 +96,7 @@ function makeUpiUri(env, order) {
   const params = new URLSearchParams({
     pa: upiId,
     pn: clean(env.UPI_PAYEE_NAME || 'MistBean Coffee', 80),
-    am: (Number(order.total_amount) / 1).toFixed(2),
+    am: (Number(order.payable_paise || order.total_amount * 100) / 100).toFixed(2),
     cu: 'INR',
     tn: `MistBean ${order.order_ref}`,
     tr: order.order_ref
@@ -238,16 +248,16 @@ async function api(request, env) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
   const payMatch = path.match(/^\/pay\/(MB-[A-Z0-9-]+)$/i);
   if (payMatch && method === 'GET') {
-    const order = await env.DB.prepare('SELECT order_ref,product_name,pack_grams,quantity,total_amount,status,payment_status,payment_submitted_reference,payment_submitted_at FROM orders WHERE order_ref=?').bind(payMatch[1]).first();
+    const order = await env.DB.prepare('SELECT order_ref,product_name,pack_grams,quantity,total_amount,payable_paise,status,payment_status,payment_submitted_reference,payment_submitted_at FROM orders WHERE order_ref=?').bind(payMatch[1]).first();
     if (!order) return fail('Payment link not found.', 404);
-    if (order.status !== 'CONFIRMED') return fail('This order is not confirmed for payment.', 409);
+    if (!['CONFIRMED','PENDING_PAYMENT'].includes(order.status)) return fail('This order is not ready for payment.', 409);
     if (order.payment_status === 'PAID') return new Response('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment complete | MistBean Coffee</title><body style="font-family:Arial,sans-serif;background:#f5f0e7;color:#302016;padding:32px"><main style="max-width:520px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>MISTBEAN COFFEE</h1><h2>Payment already received</h2><p>Order '+order.order_ref+' is marked as paid. Thank you!</p></main></body></html>',{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
-    const amount=Number(order.total_amount).toFixed(2);
+    const amount=(Number(order.payable_paise || order.total_amount*100)/100).toFixed(2);
     const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     // HDFC SmartHub Vyapar static merchant QR payload supplied by the merchant.
     // This QR does not encode the order amount; the customer must enter it manually.
-    const hdfcMerchantQrPayload='0002010102110216440384369849350704165220240369849356061661000303698493540825HDFC00000015010080574943026420010A0000005240124ushadv.36984935@hdfcbank27420010A0000005240124STQD726861117941909444555204541153033565802IN5908USHA D V6009BANGALORE610656006862400524STQD726861117941909444550708369849356304d96b';
-    const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=16&data='+encodeURIComponent(hdfcMerchantQrPayload);
+    const upiUri=makeUpiUri(env,{...order,total_amount:Number(order.payable_paise||order.total_amount*100)/100});
+    const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=16&data='+encodeURIComponent(upiUri);
     const submitted=Boolean(order.payment_submitted_reference);
     const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#302016"><title>Pay '+amount+' | MistBean Coffee</title><style>*{box-sizing:border-box}body{margin:0;padding:24px 16px;background:#f4efe6;color:#302016;font-family:Arial,sans-serif}.card{max-width:540px;margin:24px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px #30201618}.head{background:#302016;color:#fff;padding:24px 28px;border-bottom:5px solid #b8874d}.brand{font-size:25px;font-weight:800;letter-spacing:1px}.sub{color:#e2c69e;font-size:12px;margin-top:5px}.body{padding:26px}.muted{color:#74695f;font-size:13px}.amount{font-size:34px;font-weight:800;margin:8px 0 20px}.item{padding:14px 0;border-bottom:1px solid #eee5d9;line-height:1.6}.pay{display:block;text-align:center;background:#2d7046;color:#fff;text-decoration:none;padding:17px;border-radius:10px;font-weight:800;font-size:17px;margin:20px 0}.qr{text-align:center;background:#faf7f1;border:1px solid #eee5d9;border-radius:12px;padding:16px;margin-top:18px}.qr img{width:240px;height:240px;max-width:100%;background:white}.hint{font-size:13px;line-height:1.5;color:#655b52}.foot{text-align:center;padding:0 24px 24px;color:#74695f;font-size:12px}.confirm{margin-top:22px;padding:18px;background:#f7f4ed;border:1px solid #e8dfd1;border-radius:12px}.confirm h3{margin:0 0 8px}.confirm label{display:block;font-size:13px;font-weight:700;margin:12px 0 6px}.confirm input{width:100%;padding:13px;border:1px solid #d8cebf;border-radius:8px;font-size:16px}.confirm button{width:100%;border:0;border-radius:9px;background:#302016;color:#fff;padding:14px;font-weight:800;font-size:15px;margin-top:14px}.confirm button:disabled{opacity:.55}.notice{font-size:13px;line-height:1.5;margin-top:12px;color:#655b52}.success{padding:13px;border-radius:9px;background:#e8f2e8;color:#24512e;font-size:13px;line-height:1.5}.error{color:#a12d20;font-size:13px;margin-top:10px}</style></head><body><main class="card"><header class="head"><div class="brand">MISTBEAN COFFEE</div><div class="sub">FROM THE COORG HILLS</div></header><section class="body"><div class="muted">PAYMENT FOR ORDER</div><h2 style="margin:6px 0">'+esc(order.order_ref)+'</h2><div class="muted">TOTAL PAYABLE</div><div class="amount">₹'+amount+'</div><div class="item"><strong>'+esc(order.product_name)+' · '+esc(order.pack_grams)+'g × '+esc(order.quantity)+'</strong><br><span class="muted">Order total includes the confirmed delivery charge.</span></div><p class="hint">Scan the HDFC SmartHub Vyapar merchant QR using any UPI app. The QR is static, so enter the exact amount shown above manually. Before paying, confirm the payee displayed by your UPI app is <strong>USHA D V</strong>. Do not proceed if the payee or amount is incorrect.</p><div class="qr"><strong>HDFC SmartHub Vyapar · Scan &amp; Pay</strong><p class="hint">Scan this QR from another phone, or save the QR and open it in your UPI app.</p><img src="'+qrUrl+'" alt="HDFC SmartHub Vyapar merchant UPI QR code"><p class="hint">Static merchant QR · Enter ₹'+amount+' manually. Payment is verified manually by MistBean.</p></div><div class="confirm" id="confirmBox"><h3>Already paid?</h3><p class="hint">Enter the UPI transaction ID / UTR / RRN shown on your payment success screen. MistBean will verify the credit before confirming your order as paid.</p><form id="paymentForm" data-order-ref="'+esc(order.order_ref)+'" data-amount="'+Number(order.total_amount)+'"><label for="paidAmount">Amount shown as paid (₹)</label><input id="paidAmount" name="amount" inputmode="decimal" value="'+amount+'" readonly><label for="paymentReference">UPI transaction ID / UTR / RRN</label><input id="paymentReference" name="reference" required minlength="6" maxlength="80" autocomplete="off" placeholder="Enter transaction reference" '+(submitted?'value="'+esc(order.payment_submitted_reference)+'"':'')+'><button id="submitPayment" type="submit" '+(submitted?'disabled':'')+'>'+(submitted?'Payment details submitted':'I have paid – submit details')+'</button><div id="paymentMessage" class="'+(submitted?'success':'notice')+'" role="status">'+(submitted?'Your payment reference has been received. MistBean will check the bank credit and update your order. You do not need to pay again.':'Only submit after your UPI app shows a successful payment. Do not share your UPI PIN or OTP.')+'</div></form></div></section><footer class="foot">MistBean Coffee · Your order remains pending until payment is verified.</footer></main><script src="/payment.js" defer></script></body></html>';
     return new Response(html,{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
@@ -261,7 +271,7 @@ async function api(request, env) {
     if (!/^[A-Za-z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI transaction ID / UTR / RRN.');
     const order = await env.DB.prepare('SELECT id,order_ref,total_amount,status,payment_status FROM orders WHERE order_ref=?').bind(ref).first();
     if (!order) return fail('Order not found. Check the payment link.', 404);
-    if (order.status !== 'CONFIRMED') return fail('This order is not yet confirmed for payment.', 409);
+    if (!['CONFIRMED','PENDING_PAYMENT'].includes(order.status)) return fail('This order is not yet ready for payment.', 409);
     if (order.payment_status === 'PAID') return fail('Payment is already verified for this order.', 409);
     if (!Number.isFinite(amount) || amount !== Number(order.total_amount)) return fail('The amount entered does not match the confirmed order total.', 400);
     const submittedAt = now();
@@ -299,12 +309,10 @@ async function api(request, env) {
     try { paymentUrl=makePaymentUrl(env,url,{order_ref:ref}); }
     catch(e) { return fail(e.message,503); }
     await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,delivery_charge,total_amount,status,payment_status,customer_whatsapp_opt_in,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'CONFIRMED','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
     const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
     await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref,deliveryCharge,totalAmount});
-    await audit(env,'ORDER_AUTO_CONFIRMED',id,'system',{deliveryCharge,totalAmount});
-    if(optIn) await notifyCustomer(env,order,env.WHATSAPP_TEMPLATE_ORDER_RECEIVED,[name,ref,product.name,`${pack}g x ${qty}`,`INR ${totalAmount}`]);
-    return json({ok:true,orderRef:ref,status:'CONFIRMED',paymentStatus:'UNPAID',subtotal,deliveryCharge,totalAmount,paymentUrl,message:'Order placed. Complete payment using the HDFC merchant QR.'},201);
+    return json({ok:true,orderRef:ref,status:'PENDING',paymentStatus:'UNPAID',subtotal,deliveryCharge,totalAmount,message:'Order received. MistBean will review it and send payment instructions.'},201);
   }
   if (path === '/api/webhooks/whatsapp' && method === 'GET') {
     const mode=url.searchParams.get('hub.mode'), token=url.searchParams.get('hub.verify_token'), challenge=url.searchParams.get('hub.challenge');
@@ -363,7 +371,9 @@ async function api(request, env) {
       if(action==='confirm'){
         if(order.status!=='PENDING')return fail('Only pending orders can be confirmed.',409);
         const delivery=Math.max(0,Math.min(100000,Math.round(Number(body.deliveryCharge)||0)));
-        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,now(),id).run();
+        const finalTotal=Number(order.subtotal)+delivery;
+        let uniqueAmount; try { uniqueAmount=await uniquePayablePaise(env,id,finalTotal); } catch(e) { return fail(e.message,503); }
+        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,payable_paise=?,unique_amount_suffix=?,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,uniqueAmount.payable,uniqueAmount.suffix,now(),id).run();
         await audit(env,'ORDER_CONFIRMED',id,actor,{deliveryCharge:delivery});
         const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
         // Payment instructions are deliberately sent only after the admin clicks
@@ -384,7 +394,7 @@ async function api(request, env) {
           `${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
           `Products: ₹${order.subtotal}`,
           `Delivery: ₹${order.delivery_charge}`,
-          `*AMOUNT TO PAY: ₹${order.total_amount}*`,
+          `*AMOUNT TO PAY: ₹${(Number(order.payable_paise||order.total_amount*100)/100).toFixed(2)}*`,
           ``,
           `*PAYMENT*`,
           `UPI ID: ${clean(env.UPI_ID,120)}`,
@@ -395,15 +405,16 @@ async function api(request, env) {
         ].join('\\n');
         if(env.WHATSAPP_MODE==='meta') {
           try {
-            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${order.total_amount}`,clean(env.UPI_ID,120),paymentUrl],clean(env.WHATSAPP_TEMPLATE_PAYMENT_LANGUAGE||'en',20));
+            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${(Number(order.payable_paise||order.total_amount*100)/100).toFixed(2)}`,clean(env.UPI_ID,120),paymentUrl],clean(env.WHATSAPP_TEMPLATE_PAYMENT_LANGUAGE||'en',20));
             await env.DB.prepare('UPDATE orders SET payment_details_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
             await audit(env,'PAYMENT_DETAILS_SENT',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
             return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',paymentUrl,totalAmount:order.total_amount});
           } catch(e) { console.error('WhatsApp payment request failed',e.message); return fail(`WhatsApp could not send the payment link: ${e.message}`,502); }
         }
         const chatUrl=whatsappChatUrl(order.customer_phone,message);
-        await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:order.total_amount});
-        return json({ok:true,whatsappUrl:chatUrl,paymentUrl,totalAmount:order.total_amount});
+        await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
+        await env.DB.prepare('UPDATE orders SET payment_request_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
+        return json({ok:true,whatsappUrl:chatUrl,paymentUrl,totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
       } else if(action==='reject'){
         if(order.status!=='PENDING')return fail('Only pending orders can be rejected.',409);
         const reason=clean(body.reason,300); if(!reason)return fail('Please provide a rejection reason.');
