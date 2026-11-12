@@ -1,8 +1,8 @@
 # MistBean Coffee — Cloudflare ordering platform
 
-A deployable starter for MistBean's customer storefront, order intake API, private admin desk, D1 database, R2 invoice storage and WhatsApp Cloud API adapter.
+A deployable starter for MistBean's customer storefront, order intake API, private admin desk, D1 database and R2 invoice storage. WhatsApp communication is personal-account click-to-chat and manual only.
 
-**Current safety mode:** `WHATSAPP_MODE=mock`. The code does not send real WhatsApp messages until Meta onboarding, approved templates and secrets are configured. Nothing in this package changes or migrates the existing phone number.
+**WhatsApp policy:** personal WhatsApp only. The application prepares messages and opens official wa.me click-to-chat drafts. An owner must review and press Send. No WhatsApp Business API, unofficial libraries, browser automation, background sending or webhook-based messaging is used.
 
 ## Included
 
@@ -12,8 +12,8 @@ A deployable starter for MistBean's customer storefront, order intake API, priva
 - Private admin sign-in and order dashboard.
 - Confirm/reject orders, set delivery charge, verify payment, mark dispatch/delivery.
 - PDF invoice generation after payment verification, stored in private R2.
-- Optional WhatsApp Cloud API template notifications and invoice document delivery.
-- WhatsApp webhook verification endpoint with HMAC signature validation when `WHATSAPP_APP_SECRET` is configured.
+- Copy-ready payment, invoice and shipping WhatsApp messages for manual sending.
+- No WhatsApp API integration or automatic message sending.
 - Order creation rate limit (five submissions per source IP per ten minutes) plus additional Cloudflare edge rate limiting recommended.
 - Setup, security, business-readiness and deployment guides.
 
@@ -74,14 +74,13 @@ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Do not run production migrations
 
 The admin page is intentionally a separate web page because a business WhatsApp number cannot send commands to itself. It avoids needing a second admin phone number.
 
-## WhatsApp behaviour
+## WhatsApp behaviour — manual only
 
-- In mock mode, no messages are sent.
-- In Meta mode, the customer must tick the optional transactional WhatsApp consent checkbox for automated customer notifications/invoice delivery.
-- Template messages are used because business-initiated messages outside the customer-service window require approved templates. Configure approved templates whose names and parameter layouts match `docs/WHATSAPP.md`.
-- The same business number cannot be its own admin recipient. Admins operate through `/admin/`; do not configure `ORDER_NOTIFY_PHONE` as the same sender number expecting a self-notification.
-- Webhook endpoint: `GET/POST /api/webhooks/whatsapp`.
-- The webhook currently verifies/records incoming event IDs; it does not parse incoming free-text commands or control orders from WhatsApp.
+- No WhatsApp Business Cloud API, Meta templates, API tokens, webhook sending or unofficial WhatsApp automation.
+- Admin actions prepare a message and open the official wa.me click-to-chat draft. The owner must review and press Send.
+- Invoice PDFs are downloaded from the private admin dashboard and attached manually in WhatsApp.
+- Dashboard status is marked sent only after the owner confirms that they personally sent the message.
+- Keep customer contact details limited to order fulfilment and applicable privacy requirements.
 
 ## Important launch blockers
 
@@ -104,23 +103,18 @@ The admin page is intentionally a separate web page because a business WhatsApp 
 - The order API stores customer phone/address to fulfil the order. Set a reviewed retention schedule and follow applicable Indian privacy, tax and food-business obligations.
 
 
-## Local WhatsApp + UPI payment-link workflow
+## Manual WhatsApp + UPI workflow
 
-1. Copy `.dev.vars.example` to `.dev.vars` if you have not already done so.
-2. Set `UPI_ID` to the UPI ID that should receive test payments and `UPI_PAYEE_NAME` to the exact payee name shown by the UPI app. Never put a UPI PIN, OTP, bank password or card credentials in this file.
-3. Apply the local D1 migrations: `npm run db:local`.
-4. Start the app with `npm run dev`. In local development, the payment link uses the Wrangler localhost origin.
-5. Place a test order and tick the WhatsApp consent checkbox.
-6. In `/admin/`, confirm the order and enter a delivery charge. Choose **Send UPI payment link on WhatsApp**. In mock mode, WhatsApp opens with a prefilled HTTPS link; review the message and send it yourself.
-7. Open the link in a browser. A confirmed unpaid order redirects to a `upi://pay` URI. Test on a phone with a UPI app installed if you want to verify app hand-off. A localhost link is only reachable from the local machine/network; it is not a public customer payment link.
-8. Unknown, pending, rejected or already-paid orders must not redirect to UPI.
-9. The admin must independently verify the actual bank credit and UTR before marking payment PAID. A UTR/reference or screenshot alone is not proof of payment.
-10. Generate and download the invoice. Open the invoice WhatsApp message, attach the downloaded PDF and send it. Mark invoice sent only after it has actually been sent.
-11. Record courier/tracking details and dispatch only after payment verification and invoice checks.
+1. Configure UPI_ID, UPI_PAYEE_NAME and PUBLIC_BASE_URL as needed. Never store a UPI PIN, OTP or bank password.
+2. Run npm run db:local and npm run dev.
+3. Customer places an order; it appears in /admin/.
+4. Owner confirms the order and enters delivery charge. The dashboard shows product subtotal, delivery and final payable amount.
+5. Choose Request Payment. The app copies the prepared payment message and opens the customer's WhatsApp chat. Review and press Send manually.
+6. Customer pays and shares UTR/screenshot. Owner independently checks the bank app, enters the UTR and marks payment PAID.
+7. Generate invoice, download its PDF, copy the invoice message, open WhatsApp, attach the PDF and press Send manually. Then mark invoice sent.
+8. Enter courier/tracking details. Copy the shipping update, open WhatsApp and send manually. Mark dispatched only after sending.
 
-For a deployed environment, configure `PUBLIC_BASE_URL` as the public HTTPS origin (for example `https://mistbeancoffee.in`) before sending payment links. The public payment route is routed through the Worker, does not expose customer PII, and takes the amount and UPI ID only from server-side configuration and the confirmed D1 order.
-
-In Meta mode, the approved body-only utility template `mistbean_payment_request` is required. It contains five body parameters: customer name, order reference, final amount, UPI ID and HTTPS payment URL. See `docs/WHATSAPP.md`. Meta template approval and production credentials are not included in local mock-mode testing.
+No message is sent by the server. A UTR or screenshot alone never proves payment. Localhost payment links are not reachable by external customers; use a public HTTPS URL for real customer orders.
 
 ## Local integration test build and security notes
 
