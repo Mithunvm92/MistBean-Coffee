@@ -366,7 +366,7 @@ async function api(request, env) {
           `After payment, share your UPI UTR/reference here. We will verify the payment before dispatch.`,
           ``,
           `Thank you for choosing MistBean Coffee.`
-        ].join('\\n');
+        ].join('\n');
         const chatUrl=whatsappChatUrl(order.customer_phone,message);
         await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
         await env.DB.prepare('UPDATE orders SET payment_request_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
@@ -395,7 +395,6 @@ async function api(request, env) {
           ]);
           if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0) || !(results?.[2]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
         } catch(e) { return fail('This UTR may already be recorded. Check the payment ledger before retrying.',409); }
-        if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
         await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
         const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
         try {
