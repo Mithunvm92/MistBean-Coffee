@@ -305,9 +305,6 @@ async function api(request, env) {
       ON CONFLICT(phone) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at`).bind(customerId,accountRef,phone,name,timestamp).run();
     const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
     const deliveryCharge=1, totalAmount=subtotal+deliveryCharge;
-    let paymentUrl;
-    try { paymentUrl=makePaymentUrl(env,url,{order_ref:ref}); }
-    catch(e) { return fail(e.message,503); }
     await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,delivery_charge,total_amount,status,payment_status,customer_whatsapp_opt_in,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
     const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
