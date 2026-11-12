@@ -264,7 +264,7 @@ async function api(request, env) {
     if (order.payment_status === 'PAID') return fail('Payment is already verified for this order.', 409);
     if (!Number.isFinite(amount) || amount !== Number(order.total_amount)) return fail('The amount entered does not match the confirmed order total.', 400);
     const submittedAt = now();
-    await env.DB.prepare('UPDATE orders SET payment_submitted_reference=?,payment_submitted_amount=?,payment_submitted_at=?,updated_at=? WHERE id=? AND payment_status<>'PAID'')
+    await env.DB.prepare("UPDATE orders SET payment_submitted_reference=?,payment_submitted_amount=?,payment_submitted_at=?,updated_at=? WHERE id=? AND payment_status<>'PAID'")
       .bind(reference, amount, submittedAt, submittedAt, order.id).run();
     await audit(env, 'CUSTOMER_PAYMENT_DETAILS_SUBMITTED', order.id, 'customer', { reference, amount });
     return json({ ok:true, status:'PENDING_VERIFICATION', message:'Payment details received. MistBean will verify the bank credit.' });
