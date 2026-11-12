@@ -294,12 +294,17 @@ async function api(request, env) {
     await env.DB.prepare(`INSERT INTO customers(id,account_ref,phone,display_name,updated_at) VALUES(?,?,?,?,?)
       ON CONFLICT(phone) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at`).bind(customerId,accountRef,phone,name,timestamp).run();
     const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
-    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,total_amount,customer_whatsapp_opt_in)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,subtotal,optIn).run();
+    const deliveryCharge=1, totalAmount=subtotal+deliveryCharge;
+    let paymentUrl;
+    try { paymentUrl=makePaymentUrl(env,request.url,{order_ref:ref}); }
+    catch(e) { return fail(e.message,503); }
+    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,delivery_charge,total_amount,status,payment_status,customer_whatsapp_opt_in,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'CONFIRMED','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
     const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-    await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref});
-    if(optIn) await notifyCustomer(env,order,env.WHATSAPP_TEMPLATE_ORDER_RECEIVED,[name,ref,product.name,`${pack}g x ${qty}`,`INR ${subtotal}`]);
-    return json({ok:true,orderRef:ref,status:'PENDING',subtotal,deliveryCharge:null,totalAmount:null,message:'Order received. MistBean will confirm availability and delivery charges.'},201);
+    await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref,deliveryCharge,totalAmount});
+    await audit(env,'ORDER_AUTO_CONFIRMED',id,'system',{deliveryCharge,totalAmount});
+    if(optIn) await notifyCustomer(env,order,env.WHATSAPP_TEMPLATE_ORDER_RECEIVED,[name,ref,product.name,`${pack}g x ${qty}`,`INR ${totalAmount}`]);
+    return json({ok:true,orderRef:ref,status:'CONFIRMED',paymentStatus:'UNPAID',subtotal,deliveryCharge,totalAmount,paymentUrl,message:'Order placed. Complete payment using the HDFC merchant QR.'},201);
   }
   if (path === '/api/webhooks/whatsapp' && method === 'GET') {
     const mode=url.searchParams.get('hub.mode'), token=url.searchParams.get('hub.verify_token'), challenge=url.searchParams.get('hub.challenge');
