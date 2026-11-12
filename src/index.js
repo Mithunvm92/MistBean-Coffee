@@ -114,7 +114,6 @@ function whatsappRecipient(phone) {
   if (/^91[6-9]\d{9}$/.test(digits)) return digits;
   throw new Error('Customer phone number is not a valid Indian WhatsApp number.');
 }
-async function notifyCustomer() { return { skipped:true, reason:'Manual WhatsApp only.' }; }
 
 function pdfEscape(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,' '); }
 function makeInvoicePdf(order, env) {
@@ -250,7 +249,7 @@ async function api(request, env) {
     return json({ ok:true, status:'PENDING_VERIFICATION', message:'Payment details received. MistBean will verify the bank credit.' });
   }
   if (method === 'GET' && path === '/api/health') return json({ok:true, service:'mistbean-api', time:now()});
-  if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env), whatsappMode:env.WHATSAPP_MODE || 'mock'});
+  if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env)});
   if (method === 'POST' && path === '/api/orders') {
     const ipHash=await sha256(request.headers.get('cf-connecting-ip')||'unknown');
     await env.DB.prepare("DELETE FROM rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
@@ -377,7 +376,6 @@ async function api(request, env) {
         const reason=clean(body.reason,300); if(!reason)return fail('Please provide a rejection reason.');
         await env.DB.prepare("UPDATE orders SET status='REJECTED',rejection_reason=?,updated_at=? WHERE id=? AND status='PENDING'").bind(reason,now(),id).run();
         await audit(env,'ORDER_REJECTED',id,actor,{reason});
-        const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,'REJECTED',reason]);
       } else if(action==='payment'){
         if(body.status!=='PAID')return fail('Payment status must be PAID.');
         if(order.status!=='CONFIRMED')return fail('Confirm the order before verifying payment.',409);
@@ -400,7 +398,6 @@ async function api(request, env) {
         if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
         await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
         const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-        await notifyCustomer(env,paidOrder,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[paidOrder.customer_name,paidOrder.order_ref,'PAID','Your payment has been verified. Thank you for choosing MistBean Coffee.']);
         try {
           const invoice=await createInvoice(env,paidOrder,actor);
           await audit(env,'INVOICE_AUTO_GENERATED',id,actor,{invoiceNumber:invoice.invoiceNumber,customerAccountRef:paidOrder.customer_account_ref});
@@ -424,7 +421,6 @@ async function api(request, env) {
           return json({ok:true,order:fresh,whatsappUrl:whatsappChatUrl(fresh.customer_phone,message),message,manualSendRequired:true});
         } else {
           await env.DB.prepare('UPDATE orders SET status=?,updated_at=? WHERE id=?').bind(status,now(),id).run(); await audit(env,`ORDER_${status}`,id,actor,{});
-          const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`INR ${fresh.total_amount}`]);
         }
       } else if(action==='invoice'){
         if(order.payment_status!=='PAID')return fail('Verify payment before generating the invoice.',409);
