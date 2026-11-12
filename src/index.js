@@ -108,8 +108,7 @@ async function getProducts(env) {
   const rows = await env.DB.prepare('SELECT id,name,description,active,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
   return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
 }
-async function sendTemplate(env, to, templateName, params, languageCode = 'en') {
-  if (env.WHATSAPP_MODE !== 'meta') return { skipped: true, reason: 'WhatsApp mock mode' };
+async function sendTemplate() { return { skipped:true, reason:'Manual WhatsApp only. No WhatsApp API calls are permitted.' };
   if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID || !templateName) throw new Error('WhatsApp Cloud API is not configured.');
   const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
   const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
@@ -127,11 +126,7 @@ function whatsappRecipient(phone) {
   if (/^91[6-9]\d{9}$/.test(digits)) return digits;
   throw new Error('Customer phone number is not a valid Indian WhatsApp number.');
 }
-async function notifyCustomer(env, order, templateName, params) {
-  if (!order.customer_whatsapp_opt_in) return;
-  try { await sendTemplate(env, order.customer_phone, templateName, params); }
-  catch (error) { console.error('WhatsApp customer notification failed', error.message); }
-}
+async function notifyCustomer() { return { skipped:true, reason:'Manual WhatsApp only.' }; }
 
 function pdfEscape(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,' '); }
 function makeInvoicePdf(order, env) {
@@ -229,8 +224,7 @@ async function createInvoice(env, order, actor) {
   await audit(env,'INVOICE_GENERATED',order.id,actor,{invoiceNumber});
   return { invoiceNumber, key };
 }
-async function sendInvoiceWhatsApp(env, order, key) {
-  if (env.WHATSAPP_MODE !== 'meta') return { skipped:true, reason:'WhatsApp mock mode' };
+async function sendInvoiceWhatsApp() { return { skipped:true, reason:'Manual WhatsApp only. Invoice must be attached and sent by the owner.' };
   if (!order.customer_whatsapp_opt_in) throw new Error('Customer WhatsApp opt-in is missing.');
   const obj = await env.INVOICES.get(key);
   if (!obj) throw new Error('Invoice PDF not found.');
@@ -377,7 +371,6 @@ async function api(request, env) {
         // the separate "Send Payment Details" action in the admin panel.
       } else if(action==='payment-request'){
         if(order.status!=='CONFIRMED')return fail('Confirm the order and delivery charge before sending payment details.',409);
-        if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
         let paymentUrl;
         try { paymentUrl = makePaymentUrl(env, url, order); } catch(e) { return fail(e.message, 503); }
@@ -400,14 +393,6 @@ async function api(request, env) {
           ``,
           `Thank you for choosing MistBean Coffee.`
         ].join('\\n');
-        if(env.WHATSAPP_MODE==='meta') {
-          try {
-            const sent=await sendTemplate(env,whatsappRecipient(order.customer_phone),env.WHATSAPP_TEMPLATE_PAYMENT||'mistbean_payment_request',[order.customer_name,order.order_ref,`INR ${(Number(order.payable_paise||order.total_amount*100)/100).toFixed(2)}`,clean(env.UPI_ID,120),paymentUrl],clean(env.WHATSAPP_TEMPLATE_PAYMENT_LANGUAGE||'en',20));
-            await env.DB.prepare('UPDATE orders SET payment_details_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
-            await audit(env,'PAYMENT_DETAILS_SENT',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
-            return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',paymentUrl,totalAmount:order.total_amount});
-          } catch(e) { console.error('WhatsApp payment request failed',e.message); return fail(`WhatsApp could not send the payment link: ${e.message}`,502); }
-        }
         const chatUrl=whatsappChatUrl(order.customer_phone,message);
         await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
         await env.DB.prepare('UPDATE orders SET payment_request_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
@@ -455,15 +440,13 @@ async function api(request, env) {
         if(order.payment_status!=='PAID')return fail('Verify payment before fulfilment status changes.',409);
         if(action==='dispatch' && !order.invoice_key)return fail('Generate the invoice before dispatching this order.',409);
         if(action==='dispatch' && !order.invoice_sent_at)return fail('Mark the invoice as sent on WhatsApp before dispatching this order.',409);
-        if(action==='dispatch' && !order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(action==='dispatch'){
           const courier=clean(body.courierName,80), tracking=clean(body.trackingId,100);
           await env.DB.prepare('UPDATE orders SET status=?,courier_name=?,tracking_id=?,updated_at=? WHERE id=?').bind(status,courier||null,tracking||null,now(),id).run();
           await audit(env,`ORDER_${status}`,id,actor,{courierName:courier,trackingId:tracking});
           const message=[`☕ *MistBean Coffee – Order Dispatched*`,`Hello ${order.customer_name},`,`Your order ${order.order_ref} has been dispatched.`,`Invoice: ${order.invoice_number}`,courier?`Courier: ${courier}`:'',tracking?`Tracking ID: ${tracking}`:'',`Thank you for choosing MistBean Coffee!`].filter(Boolean).join('\n');
           const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-          if(env.WHATSAPP_MODE!=='meta')return json({ok:true,order:fresh,whatsappUrl:whatsappChatUrl(fresh.customer_phone,message),manualAttachmentRequired:true});
-          await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`Invoice ${fresh.invoice_number}. ${courier?`Courier ${courier}. `:''}${tracking?`Tracking ${tracking}`:''}`]);
+          return json({ok:true,order:fresh,whatsappUrl:whatsappChatUrl(fresh.customer_phone,message),message,manualSendRequired:true});
         } else {
           await env.DB.prepare('UPDATE orders SET status=?,updated_at=? WHERE id=?').bind(status,now(),id).run(); await audit(env,`ORDER_${status}`,id,actor,{});
           const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`INR ${fresh.total_amount}`]);
@@ -474,13 +457,6 @@ async function api(request, env) {
         let invoice;
         try { invoice = await createInvoice(env,order,actor); } catch(e){return fail(e.message,409);}
         const invoiceOrder = await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-        if(env.WHATSAPP_MODE==='meta'){
-          try {
-            await sendInvoiceWhatsApp(env,invoiceOrder,invoice.key);
-            await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
-            await audit(env,'INVOICE_SENT',id,actor,{mode:'meta',invoiceNumber:invoice.invoiceNumber});
-          } catch(e) { return fail(`Invoice generated (${invoice.invoiceNumber}) but WhatsApp delivery failed: ${e.message}`,502); }
-        } else {
           const message=[
             `☕ *MISTBEAN COFFEE*`,
             `*Invoice ready*`,
@@ -491,17 +467,12 @@ async function api(request, env) {
             `Thank you for choosing MistBean Coffee.`
           ].join('\\n');
           await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
-          const whatsappUrl=whatsappChatUrl(invoiceOrder.customer_phone,message);
-          return json({ok:true,order:invoiceOrder,whatsappUrl,manualAttachmentRequired:true});
-        }
+        const whatsappUrl=whatsappChatUrl(invoiceOrder.customer_phone,message);
+        return json({ok:true,order:invoiceOrder,whatsappUrl,message,manualAttachmentRequired:true});
       } else if(action==='invoice-send'){
         if(!order.invoice_key)return fail('Generate the invoice first.',409);
         if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(order.payment_status!=='PAID')return fail('Verify payment before sending the invoice.',409);
-        if(env.WHATSAPP_MODE==='meta'){
-          try { await sendInvoiceWhatsApp(env,order,order.invoice_key); await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run(); await audit(env,'INVOICE_SENT',id,actor,{mode:'meta'}); }
-          catch(e){return fail(e.message,502);}
-        } else {
           const message=[
             `☕ *MISTBEAN COFFEE*`,
             `*Invoice ready*`,
@@ -513,9 +484,7 @@ async function api(request, env) {
           ].join('\\n');
           const chatUrl=whatsappChatUrl(order.customer_phone,message);
           await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
-          return json({ok:true,whatsappUrl:chatUrl,manualAttachmentRequired:true});
-        }
-      } else if(action==='invoice-sent'){
+          return json({ok:true,whatsappUrl:chatUrl,manualAttachmentRequired:true});      } else if(action==='invoice-sent'){
         if(!order.invoice_key)return fail('Generate the invoice first.',409);
         if(order.payment_status!=='PAID')return fail('Verify payment before recording invoice delivery.',409);
         await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
