@@ -1,3 +1,22 @@
+const copyUpiButton = document.getElementById('copyUpi');
+if (copyUpiButton) {
+  copyUpiButton.addEventListener('click', async () => {
+    const upiId = document.getElementById('merchantUpi')?.textContent?.trim();
+    if (!upiId) return;
+    try {
+      await navigator.clipboard.writeText(upiId);
+      copyUpiButton.textContent = 'Copied';
+    } catch {
+      copyUpiButton.textContent = 'Select UPI ID';
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById('merchantUpi'));
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  });
+}
+
 const form = document.getElementById('paymentForm');
 if (form) {
   form.addEventListener('submit', async event => {
