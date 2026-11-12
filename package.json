@@ -8,8 +8,11 @@
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 migrations apply mistbean-db --local",
     "db:remote": "wrangler d1 migrations apply mistbean-db --remote",
-    "typecheck": "node --check src/index.js && node --check public/customer.js && node --check public/admin/admin.js",
-    "admin:hash": "node scripts/hash-password.js"
+    "typecheck": "node --check src/index.js && node --check public/customer.js && node --check public/payment.js && node --check public/admin/admin.js",
+    "admin:hash": "node scripts/hash-password.js",
+    "test": "node --test"
   },
-  "devDependencies": { "wrangler": "^4.45.0" }
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
 }
