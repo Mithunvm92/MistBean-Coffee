@@ -425,13 +425,18 @@ async function api(request, env) {
         if(reference.length<6)return fail('Enter the UPI transaction reference / UTR (at least 6 characters).');
         if(order.payment_status==='PAID')return fail('Payment is already verified.',409);
         const verifiedAt=now(), paymentId=uuid();
-        const results=await env.DB.batch([
-          env.DB.prepare(`INSERT INTO customer_payments(id,customer_id,order_id,amount,currency,payment_method,payment_reference,verified_by,verified_at)
-            SELECT ?,customer_id,id,total_amount,'INR','UPI',?,?,? FROM orders
-            WHERE id=? AND status='CONFIRMED' AND payment_status<>'PAID'`).bind(paymentId,reference,actor,verifiedAt,id),
-          env.DB.prepare(`UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,updated_at=?
-            WHERE id=? AND payment_status<>'PAID' AND EXISTS(SELECT 1 FROM customer_payments WHERE order_id=orders.id AND id=?)`).bind(reference,verifiedAt,verifiedAt,id,paymentId)
-        ]);
+        const amountPaise=Number(order.payable_paise||Math.round(Number(order.total_amount)*100));
+        try {
+          const results=await env.DB.batch([
+            env.DB.prepare('INSERT INTO payments(id,order_id,utr,amount_paise,source) VALUES(?,?,?,?,?)').bind(paymentId,id,reference.toUpperCase(),amountPaise,'manual'),
+            env.DB.prepare(`INSERT INTO customer_payments(id,customer_id,order_id,amount,currency,payment_method,payment_reference,verified_by,verified_at)
+              SELECT ?,customer_id,id,?,'INR','UPI',?,?,? FROM orders
+              WHERE id=? AND status='CONFIRMED' AND payment_status<>'PAID'`).bind(uuid(),amountPaise/100,reference,actor,verifiedAt,id),
+            env.DB.prepare(`UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,paid_at=?,updated_at=?
+              WHERE id=? AND payment_status<>'PAID' AND EXISTS(SELECT 1 FROM customer_payments WHERE order_id=orders.id AND payment_reference=? AND verified_at=?)`).bind(reference,verifiedAt,verifiedAt,verifiedAt,id,reference,verifiedAt)
+          ]);
+          if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0) || !(results?.[2]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
+        } catch(e) { return fail('This UTR may already be recorded. Check the payment ledger before retrying.',409); }
         if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
         await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
         const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
