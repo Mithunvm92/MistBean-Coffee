@@ -421,6 +421,7 @@ async function api(request, env) {
         if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
         await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
         const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
+        await notifyCustomer(env,paidOrder,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[paidOrder.customer_name,paidOrder.order_ref,'PAID','Your payment has been verified. Thank you for choosing MistBean Coffee.']);
         try {
           const invoice=await createInvoice(env,paidOrder,actor);
           await audit(env,'INVOICE_AUTO_GENERATED',id,actor,{invoiceNumber:invoice.invoiceNumber,customerAccountRef:paidOrder.customer_account_ref});
