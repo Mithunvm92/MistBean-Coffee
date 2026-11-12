@@ -296,7 +296,7 @@ async function api(request, env) {
     const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
     const deliveryCharge=1, totalAmount=subtotal+deliveryCharge;
     let paymentUrl;
-    try { paymentUrl=makePaymentUrl(env,request.url,{order_ref:ref}); }
+    try { paymentUrl=makePaymentUrl(env,url,{order_ref:ref}); }
     catch(e) { return fail(e.message,503); }
     await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,delivery_charge,total_amount,status,payment_status,customer_whatsapp_opt_in,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'CONFIRMED','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
