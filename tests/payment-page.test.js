@@ -46,7 +46,7 @@ async function makeOrder(tokenValue,status='CONFIRMED',paymentStatus='UNPAID') {
     pack_grams:250,
     quantity:1,
     total_amount:450,
-    payable_paise:45007,
+    payable_paise:45000,
     status,
     payment_status:paymentStatus,
     payment_submitted_at:null
@@ -62,7 +62,7 @@ test('payment page shows the server payable amount and ignores request amount',a
   const response=await worker.fetch(new Request('https://mistbean.test/pay/'+token+'?amount=0'),env,{});
   const html=await response.text();
   assert.equal(response.status,200);
-  assert.match(html,/₹450\.07/);
+  assert.match(html,/₹450\.00/);
   assert.match(html,/upi:\/\/pay/);
   assert.match(response.headers.get('cache-control'),/no-store/);
 });
@@ -162,7 +162,7 @@ test('customer can submit UTR using the payment token and the server records ser
   assert.equal(response.status,200);
   assert.equal(order.payment_status,'PAYMENT_SUBMITTED');
   assert.equal(order.payment_submitted_reference,'123456789012');
-  assert.equal(order.payment_submitted_amount,450.07);
+  assert.equal(order.payment_submitted_amount,450);
   assert.match((await response.json()).message,/verify the bank credit/i);
 });
 test('customer cannot submit UTR twice or after the order is paid',async()=>{
