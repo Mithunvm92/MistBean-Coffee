@@ -44,7 +44,7 @@ if (form) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not submit payment details.');
       message.className = 'success';
-      message.textContent = 'Payment details received for order ' + form.dataset.orderRef + '. MistBean will verify the bank credit and update your order. Please do not pay again.';
+      message.textContent = 'Payment details received. MistBean will verify the bank credit and update your order. Please do not pay again.';
       button.textContent = 'Details submitted';
     } catch (error) {
       message.className = 'error';
