@@ -1,3 +1,5 @@
+import QRCode from 'qrcode';
+import { buildUpiLink, formatPaise } from './payment-domain.js';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -90,21 +92,32 @@ function publicBaseUrl(env, requestUrl) {
   if (!configured && !local) throw new Error('Set PUBLIC_BASE_URL to the public HTTPS storefront URL before sending payment links.');
   return base.origin;
 }
-function makePaymentUrl(env, requestUrl, order) {
-  return `${publicBaseUrl(env, requestUrl)}/pay/${encodeURIComponent(order.order_ref)}`;
+function makePaymentUrl(env, requestUrl, token) {
+  return `${publicBaseUrl(env, requestUrl)}/pay/${encodeURIComponent(token)}`;
 }
 function makeUpiUri(env, order) {
   const upiId = clean(env.UPI_ID, 120);
-  if (!upiId || !upiId.includes('@')) throw new Error('Set a valid UPI_ID in local .dev.vars before preparing payment details.');
-  const params = new URLSearchParams({
-    pa: upiId,
-    pn: clean(env.UPI_PAYEE_NAME || 'MistBean Coffee', 80),
-    am: (Number(order.payable_paise || order.total_amount * 100) / 100).toFixed(2),
-    cu: 'INR',
-    tn: `MistBean ${order.order_ref}`,
-    tr: order.order_ref
-  });
-  return `upi://pay?${params.toString()}`;
+  const storeName = clean(env.STORE_NAME, 80);
+  if (!upiId || !upiId.includes('@')) throw new Error('Set a valid UPI_ID before preparing payment details.');
+  if (!storeName) throw new Error('Set STORE_NAME before preparing payment details.');
+  if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) throw new Error('The confirmed payable amount is missing.');
+  return buildUpiLink({ upiId, storeName, amountPaise:order.payable_paise, orderId:order.order_ref });
+}
+function createPaymentToken() {
+  return b64(crypto.getRandomValues(new Uint8Array(32)));
+}
+async function allowPaymentPageRequest(request, env, route) {
+  const ipHash = await sha256(request.headers.get('cf-connecting-ip') || 'unknown');
+  await env.DB.prepare("DELETE FROM payment_page_rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM payment_page_rate_limits WHERE ip_hash=? AND route=? AND julianday(created_at)>julianday('now','-1 minute')").bind(ipHash,route).first();
+  const limit = route === 'qr' ? 60 : 30;
+  if ((count?.n || 0) >= limit) return false;
+  await env.DB.prepare('INSERT INTO payment_page_rate_limits(ip_hash,route) VALUES(?,?)').bind(ipHash,route).run();
+  return true;
+}
+async function paymentOrderByToken(env, token) {
+  if (!/^[A-Za-z0-9_-]{40,50}$/.test(token)) return null;
+  return env.DB.prepare('SELECT order_ref,product_name,pack_grams,quantity,total_amount,payable_paise,status,payment_status,payment_submitted_at FROM orders WHERE pay_token_hash=?').bind(await sha256(token)).first();
 }
 
 async function getProducts(env) {
@@ -217,19 +230,35 @@ async function createInvoice(env, order, actor) {
 
 async function api(request, env) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
-  const payMatch = path.match(/^\/pay\/(MB-[A-Z0-9-]+)$/i);
+  const qrMatch = path.match(/^\\/qr\\/([A-Za-z0-9_-]{40,50})\\.png$/);
+  if (qrMatch && method === 'GET') {
+    if (!await allowPaymentPageRequest(request,env,'qr')) return fail('Too many payment page requests. Please try again shortly.',429);
+    const order = await paymentOrderByToken(env,qrMatch[1]);
+    if (!order || !['CONFIRMED','PENDING_PAYMENT'].includes(order.status) || !['UNPAID','PAYMENT_SUBMITTED'].includes(order.payment_status) || !Number.isSafeInteger(order.payable_paise) || order.payable_paise<1) return fail('Payment QR not found or no longer payable.',404);
+    const upiUri = makeUpiUri(env,order);
+    const png = await QRCode.toBuffer(upiUri,{type:'png',width:320,margin:2,errorCorrectionLevel:'M'});
+    return new Response(png,{status:200,headers:{...SECURITY_HEADERS,'content-type':'image/png','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}});
+  }
+  const payMatch = path.match(/^\\/pay\\/([A-Za-z0-9_-]{40,50})$/);
   if (payMatch && method === 'GET') {
-    const order = await env.DB.prepare('SELECT order_ref,product_name,pack_grams,quantity,total_amount,payable_paise,status,payment_status,payment_submitted_at FROM orders WHERE order_ref=?').bind(payMatch[1]).first();
-    if (!order) return fail('Payment link not found.', 404);
-    if (!['CONFIRMED','PENDING_PAYMENT'].includes(order.status)) return fail('This order is not ready for payment.', 409);
-    if (order.payment_status === 'PAID') return new Response('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment complete | MistBean Coffee</title><body style="font-family:Arial,sans-serif;background:#f5f0e7;color:#302016;padding:32px"><main style="max-width:520px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>MISTBEAN COFFEE</h1><h2>Payment already received</h2><p>Order '+order.order_ref+' is marked as paid. Thank you!</p></main></body></html>',{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store'}});
-    const amount=(Number(order.payable_paise || order.total_amount*100)/100).toFixed(2);
+    if (!await allowPaymentPageRequest(request,env,'pay')) return fail('Too many payment page requests. Please try again shortly.',429);
+    const token = payMatch[1];
+    const order = await paymentOrderByToken(env,token);
+    if (!order) return fail('Payment link not found.',404);
     const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-    // Order-specific UPI URI: the app link and QR both prefill this order's exact payable amount.
-    const upiUri=makeUpiUri(env,{...order,total_amount:Number(order.payable_paise||order.total_amount*100)/100});
-    const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=16&data='+encodeURIComponent(upiUri);
-    const submitted=Boolean(order.payment_submitted_at);
-    const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#302016"><title>Pay '+amount+' | MistBean Coffee</title><style>*{box-sizing:border-box}body{margin:0;padding:24px 16px;background:#f4efe6;color:#302016;font-family:Arial,sans-serif}.card{max-width:540px;margin:24px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px #30201618}.head{background:#302016;color:#fff;padding:24px 28px;border-bottom:5px solid #b8874d}.brand{font-size:25px;font-weight:800;letter-spacing:1px}.sub{color:#e2c69e;font-size:12px;margin-top:5px}.body{padding:26px}.muted{color:#74695f;font-size:13px}.amount{font-size:34px;font-weight:800;margin:8px 0 20px}.item{padding:14px 0;border-bottom:1px solid #eee5d9;line-height:1.6}.pay{display:block;text-align:center;background:#2d7046;color:#fff;text-decoration:none;padding:17px;border-radius:10px;font-weight:800;font-size:17px;margin:20px 0}.copy-row{display:flex;align-items:center;gap:10px;justify-content:space-between;background:#faf7f1;border:1px solid #eee5d9;border-radius:10px;padding:12px;margin-top:12px;word-break:break-all}.copy-row button{border:0;border-radius:7px;background:#302016;color:#fff;padding:9px 12px;font-weight:700;flex-shrink:0}.qr{text-align:center;background:#faf7f1;border:1px solid #eee5d9;border-radius:12px;padding:16px;margin-top:18px}.qr img{width:240px;height:240px;max-width:100%;background:white}.hint{font-size:13px;line-height:1.5;color:#655b52}.foot{text-align:center;padding:0 24px 24px;color:#74695f;font-size:12px}.confirm{margin-top:22px;padding:18px;background:#f7f4ed;border:1px solid #e8dfd1;border-radius:12px}.confirm h3{margin:0 0 8px}.confirm label{display:block;font-size:13px;font-weight:700;margin:12px 0 6px}.confirm input{width:100%;padding:13px;border:1px solid #d8cebf;border-radius:8px;font-size:16px}.confirm button{width:100%;border:0;border-radius:9px;background:#302016;color:#fff;padding:14px;font-weight:800;font-size:15px;margin-top:14px}.confirm button:disabled{opacity:.55}.notice{font-size:13px;line-height:1.5;margin-top:12px;color:#655b52}.success{padding:13px;border-radius:9px;background:#e8f2e8;color:#24512e;font-size:13px;line-height:1.5}.error{color:#a12d20;font-size:13px;margin-top:10px}</style></head><body><main class="card"><header class="head"><div class="brand">MISTBEAN COFFEE</div><div class="sub">FROM THE COORG HILLS</div></header><section class="body"><div class="muted">PAYMENT FOR ORDER</div><h2 style="margin:6px 0">'+esc(order.order_ref)+'</h2><div class="muted">TOTAL PAYABLE</div><div class="amount">₹'+amount+'</div><a class="pay" id="payWithUpi" href="'+esc(upiUri)+'">Pay using UPI app</a><p class="hint">Tap to open a compatible UPI app with the amount and order reference filled in. Review the payee and amount in your UPI app before approving.</p><div class="copy-row"><span><strong>UPI ID</strong><br><span id="merchantUpi">'+esc(clean(env.UPI_ID,120))+'</span></span><button type="button" id="copyUpi">Copy UPI ID</button></div><div class="item"><strong>'+esc(order.product_name)+' · '+esc(order.pack_grams)+'g × '+esc(order.quantity)+'</strong><br><span class="muted">Order total includes the confirmed delivery charge.</span></div><p class="hint">You can pay using the button above or scan this order-specific QR with another phone. The QR includes the exact amount and order reference. Before approving, confirm the payee displayed by your UPI app is <strong>'+esc(clean(env.UPI_PAYEE_NAME||'MistBean Coffee',80))+'</strong> and the amount is ₹'+amount+'. Do not proceed if either is incorrect.</p><div class="qr"><strong>Scan &amp; Pay with any UPI app</strong><p class="hint">Use another phone to scan this QR. It opens a payment request with the amount prefilled.</p><img src="'+qrUrl+'" alt="MistBean order-specific UPI payment QR code"><p class="hint">Order-specific QR · Amount ₹'+amount+' · Payment is verified manually by MistBean.</p></div><div class="confirm" id="confirmBox"><h3>Already paid?</h3><p class="hint">Enter the UPI transaction ID / UTR / RRN shown on your payment success screen. MistBean will verify the credit before confirming your order as paid.</p><form id="paymentForm" data-order-ref="'+esc(order.order_ref)+'" data-amount="'+(Number(order.payable_paise||order.total_amount*100)/100)+'"><label for="paidAmount">Amount shown as paid (₹)</label><input id="paidAmount" name="amount" inputmode="decimal" value="'+amount+'" readonly><label for="paymentReference">UPI transaction ID / UTR / RRN</label><input id="paymentReference" name="reference" required minlength="6" maxlength="80" autocomplete="off" placeholder="Enter transaction reference" '+(submitted?'disabled':'')+'><button id="submitPayment" type="submit" '+(submitted?'disabled':'')+'>'+(submitted?'Payment details submitted':'I have paid – submit details')+'</button><div id="paymentMessage" class="'+(submitted?'success':'notice')+'" role="status">'+(submitted?'Your payment reference has been received. MistBean will check the bank credit and update your order. You do not need to pay again.':'Only submit after your UPI app shows a successful payment. Do not share your UPI PIN or OTP.')+'</div></form></div></section><footer class="foot">MistBean Coffee · Your order remains pending until payment is verified.</footer></main><script src="/payment.js" defer></script></body></html>';
+    const page=(title,message)=>new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>'+esc(title)+' | MistBean Coffee</title></head><body style="font-family:Arial,sans-serif;background:#f5f0e7;color:#302016;padding:32px"><main style="max-width:520px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>MISTBEAN COFFEE</h1><h2>'+esc(title)+'</h2><p>'+esc(message)+'</p><p>Order: '+esc(order.order_ref)+'</p></main></body></html>',{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
+    if (order.payment_status === 'PAID') return page('Payment received','Your payment has been verified. Thank you for choosing MistBean Coffee.');
+    if (['REJECTED','CANCELLED','DELIVERED','DISPATCHED'].includes(order.status)) return page('Payment link inactive','This order is no longer accepting payments. Please contact MistBean if you need help.');
+    if (order.status !== 'CONFIRMED' && order.status !== 'PENDING_PAYMENT') return page('Order awaiting confirmation','MistBean has received your order. Payment instructions will be available after the order is confirmed.');
+    if (order.payment_status === 'PAYMENT_SUBMITTED') return page('Payment submitted','Your UTR has been submitted. MistBean will verify the bank credit. You do not need to pay again.');
+    if (order.payment_status !== 'UNPAID') return page('Payment status update','This order is not currently accepting payment. Please contact MistBean for assistance.');
+    if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return page('Payment not ready','The final payable amount is not available yet. Please contact MistBean.');
+    const amount = formatPaise(order.payable_paise);
+    const upiUri = makeUpiUri(env,order);
+    const qrUrl = '/qr/'+encodeURIComponent(token)+'.png';
+    const storeName = clean(env.STORE_NAME,80);
+    const upiId = clean(env.UPI_ID,120);
+    const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#302016"><title>Pay ₹'+amount+' | MistBean Coffee</title><style>*{box-sizing:border-box}body{margin:0;padding:24px 16px;background:#f4efe6;color:#302016;font-family:Arial,sans-serif}.card{max-width:540px;margin:24px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px #30201618}.head{background:#302016;color:#fff;padding:24px 28px;border-bottom:5px solid #b8874d}.brand{font-size:25px;font-weight:800;letter-spacing:1px}.sub{color:#e2c69e;font-size:12px;margin-top:5px}.body{padding:26px}.muted{color:#74695f;font-size:13px}.amount{font-size:34px;font-weight:800;margin:8px 0 20px}.pay{display:block;text-align:center;background:#2d7046;color:#fff;text-decoration:none;padding:17px;border-radius:10px;font-weight:800;font-size:17px;margin:20px 0}.copy-row{display:flex;align-items:center;gap:10px;justify-content:space-between;background:#faf7f1;border:1px solid #eee5d9;border-radius:10px;padding:12px;margin-top:12px;word-break:break-all}.copy-row button{border:0;border-radius:7px;background:#302016;color:#fff;padding:9px 12px;font-weight:700;flex-shrink:0}.qr{text-align:center;background:#faf7f1;border:1px solid #eee5d9;border-radius:12px;padding:16px;margin-top:18px}.qr img{width:240px;height:240px;max-width:100%;image-rendering:pixelated}.hint{font-size:13px;line-height:1.5;color:#655b52}.item{padding:14px 0;border-bottom:1px solid #eee5d9;line-height:1.6}.foot{text-align:center;padding:0 24px 24px;color:#74695f;font-size:12px}@media(min-width:769px){.pay{display:none}}@media(max-width:600px){body{padding:8px}.card{margin:8px auto}.head{padding:20px}.body{padding:20px}.amount{font-size:32px}}</style></head><body><main class="card"><header class="head"><div class="brand">'+esc(storeName)+'</div><div class="sub">SECURE ORDER PAYMENT</div></header><section class="body"><div class="muted">PAYMENT FOR ORDER</div><h2 style="margin:6px 0">'+esc(order.order_ref)+'</h2><div class="muted">TOTAL PAYABLE</div><div class="amount">₹'+amount+'</div><a class="pay" href="'+esc(upiUri)+'" rel="noreferrer">Pay with UPI app</a><p class="hint">On your phone, tap the button to open a compatible UPI app with the amount pre-filled. Review the payee and exact amount before approving.</p><div class="copy-row"><span><strong>UPI ID</strong><br><span>'+esc(upiId)+'</span></span><button type="button" id="copyUpi">Copy UPI ID</button></div><div class="item"><strong>'+esc(order.product_name)+' · '+esc(order.pack_grams)+'g × '+esc(order.quantity)+'</strong><br><span class="muted">The amount includes the confirmed delivery charge.</span></div><div class="qr"><strong>Scan &amp; Pay with any UPI app</strong><p class="hint">Scan this QR using another phone. It contains the same UPI payment details and exact amount.</p><img src="'+qrUrl+'" alt="Order-specific UPI payment QR code" width="240" height="240"><p class="hint">Pay exactly ₹'+amount+'. After payment, send your 12-digit UTR on WhatsApp. MistBean will verify the bank credit manually.</p></div></section><footer class="foot">MistBean Coffee · Payment is complete only after bank verification.</footer></main><script>document.getElementById("copyUpi").addEventListener("click",async()=>{try{await navigator.clipboard.writeText('+JSON.stringify(upiId)+');document.getElementById("copyUpi").textContent="Copied";}catch{document.getElementById("copyUpi").textContent="Copy unavailable";}});</script></body></html>';
     return new Response(html,{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
   }
   if (path === '/api/payment-submissions' && method === 'POST') {
