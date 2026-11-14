@@ -77,6 +77,8 @@ Create **Security → WAF → Rate limiting rules**. Use Log/Simulate first wher
 | `/api/admin/login` | 5 requests / minute / source IP | Challenge or block for 10 minutes |
 | `/api/orders` | 5 requests / 10 minutes / source IP | Challenge or block for 10 minutes |
 | `/api/admin/*` | 60 requests / minute / source IP | Challenge or block for 10 minutes |
+| `/pay/*` | 30 requests / minute / source IP | Block or managed challenge for 10 minutes |
+| `/qr/*` | 60 requests / minute / source IP | Block or managed challenge for 10 minutes |
 | `/api/webhooks/whatsapp` | No interactive challenge | Preserve signature verification; tune a high threshold only if needed |
 
 Plan capabilities, counting characteristics and action availability vary. Do not challenge WhatsApp webhook POSTs; Meta cannot solve browser challenges. Retain application/D1 rate limits as defence in depth.
@@ -127,7 +129,9 @@ Before production verify:
 - State-changing requests have Origin/CSRF protection as well as SameSite cookies.
 - JSON body size is bounded before parsing and unsupported content types are rejected.
 - Order endpoint validates all fields and calculates prices from D1 only.
-- Payment redirect accepts confirmed unpaid orders only and derives amount/payee server-side.
+- Payment page and QR routes accept confirmed unpaid orders only and derive amount/payee server-side.
+- Payment page and QR paths have Cloudflare edge rate limits in addition to application/D1 limits; both paths bypass cache.
+- Payment links use 32-byte random bearer tokens; only SHA-256 hashes are used for public lookup, and encrypted token material is restricted to the server for link resends.
 - Webhook HMAC is checked against the raw body and event IDs are deduplicated.
 - Errors/logs do not expose stack traces, secrets, session cookies or customer PII.
 - CSP is tested against actual storefront/admin assets; do not add wildcard script sources or unsafe-eval to silence violations.
