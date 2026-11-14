@@ -105,8 +105,8 @@ function makeUpiUri(env, order) {
 }
 
 async function getProducts(env) {
-  const rows = await env.DB.prepare('SELECT id,name,description,active,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
-  return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
+  const rows = await env.DB.prepare('SELECT id,name,description,active,in_stock,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
+  return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, inStock:Boolean(p.in_stock), prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
 }
 function whatsappRecipient(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -262,8 +262,8 @@ async function api(request, env) {
     if(![250,500,1000].includes(pack) || !Number.isInteger(qty) || qty<1 || qty>20) return fail('Invalid pack size or quantity.');
     if(!['Whole beans','Ground coffee'].includes(grind)) return fail('Invalid coffee form.');
     if(productId==='blend') { const parts=blend.split('/').map(Number); if(!/^\d{1,3}\/\d{1,3}$/.test(blend) || parts[0]>100 || parts[1]>100 || parts[0]+parts[1]!==100) return fail('Please provide a blend ratio that totals 100%.'); }
-    const product=await env.DB.prepare('SELECT id,name,price_250,price_500,price_1000,active FROM products WHERE id=?').bind(productId).first();
-    if(!product || !product.active) return fail('This coffee is currently unavailable.',409);
+    const product=await env.DB.prepare('SELECT id,name,price_250,price_500,price_1000,active,in_stock FROM products WHERE id=?').bind(productId).first();
+    if(!product || !product.active || !product.in_stock) return fail('This coffee is currently out of stock. Please choose another product.',409);
     const unit=pack===250?product.price_250:pack===500?product.price_500:product.price_1000;
     const subtotal=unit*qty; const id=uuid(); const ref=orderRef();
     const optIn=body.whatsappOptIn===true?1:0;
@@ -327,6 +327,20 @@ async function api(request, env) {
       const status=url.searchParams.get('status');
       const rows=status?await env.DB.prepare('SELECT * FROM orders WHERE status=? ORDER BY created_at DESC LIMIT 200').bind(status).all():await env.DB.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200').all();
       return json({orders:rows.results||[]});
+    }
+    if(path==='/api/admin/products' && method==='GET') {
+      const rows=await env.DB.prepare('SELECT id,name,description,active,in_stock,price_250,price_500,price_1000 FROM products ORDER BY name').all();
+      return json({products:(rows.results||[]).map(p=>({...p,in_stock:Boolean(p.in_stock)}))});
+    }
+    const stockMatch=path.match(/^\\/api\\/admin\\/products\\/([a-z0-9_-]+)\\/stock$/i);
+    if(stockMatch && method==='PATCH') {
+      let body;try{body=await request.json();}catch{return fail('Invalid JSON.');}
+      if(typeof body.inStock!=='boolean')return fail('Choose Available or Out of stock.');
+      const product=await env.DB.prepare('SELECT id,name FROM products WHERE id=?').bind(stockMatch[1]).first();
+      if(!product)return fail('Product not found.',404);
+      await env.DB.prepare('UPDATE products SET in_stock=?,updated_at=? WHERE id=?').bind(body.inStock?1:0,now(),product.id).run();
+      await audit(env,body.inStock?'PRODUCT_STOCK_AVAILABLE':'PRODUCT_MARKED_OUT_OF_STOCK',null,actor,{productId:product.id,productName:product.name,inStock:body.inStock});
+      return json({ok:true,product:{...product,inStock:body.inStock}});
     }
     const match=path.match(/^\/api\/admin\/orders\/([\w-]+)\/(confirm|reject|payment|payment-request|dispatch|deliver|invoice|invoice-send|invoice-sent)$/);
     if(match && method==='POST') {
