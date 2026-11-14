@@ -1,0 +1,1 @@
+ALTER TABLE products ADD COLUMN in_stock INTEGER NOT NULL DEFAULT 1 CHECK (in_stock IN (0,1));
