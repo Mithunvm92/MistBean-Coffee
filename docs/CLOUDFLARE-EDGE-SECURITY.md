@@ -79,6 +79,7 @@ Create **Security → WAF → Rate limiting rules**. Use Log/Simulate first wher
 | `/api/admin/*` | 60 requests / minute / source IP | Challenge or block for 10 minutes |
 | `/pay/*` | 30 requests / minute / source IP | Block or managed challenge for 10 minutes |
 | `/qr/*` | 60 requests / minute / source IP | Block or managed challenge for 10 minutes |
+| `/api/payment-submissions/*` | 10 requests / minute / source IP | Block or managed challenge for 10 minutes |
 | `/api/webhooks/whatsapp` | No interactive challenge | Preserve signature verification; tune a high threshold only if needed |
 
 Plan capabilities, counting characteristics and action availability vary. Do not challenge WhatsApp webhook POSTs; Meta cannot solve browser challenges. Retain application/D1 rate limits as defence in depth.
@@ -130,7 +131,7 @@ Before production verify:
 - JSON body size is bounded before parsing and unsupported content types are rejected.
 - Order endpoint validates all fields and calculates prices from D1 only.
 - Payment page and QR routes accept confirmed unpaid orders only and derive amount/payee server-side.
-- Payment page and QR paths have Cloudflare edge rate limits in addition to application/D1 limits; both paths bypass cache.
+- Payment page, QR and UTR submission paths have Cloudflare edge rate limits in addition to application/D1 limits; all sensitive responses bypass cache.
 - Payment links use 32-byte random bearer tokens; only SHA-256 hashes are used for public lookup, and encrypted token material is restricted to the server for link resends.
 - Webhook HMAC is checked against the raw body and event IDs are deduplicated.
 - Errors/logs do not expose stack traces, secrets, session cookies or customer PII.
@@ -147,7 +148,8 @@ Before production verify:
 - [ ] WhatsApp webhook works without challenge and rejects invalid signatures.
 - [ ] API/payment/admin/invoice responses are not cached.
 - [ ] D1/R2 are not public.
-- [ ] Unknown, pending, rejected and already-paid orders cannot redirect to UPI.
+- [ ] Unknown, pending, rejected and already-paid orders cannot display an actionable UPI payment flow.
+- [ ] UTR submission requires the unguessable payment token, accepts only confirmed unpaid orders, stores the server-calculated amount and rejects duplicate submissions.
 - [ ] Test prices replaced by approved catalogue prices before commercial use.
 - [ ] D1 backup/restore and R2 retention tested.
 
