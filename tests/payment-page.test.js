@@ -108,7 +108,7 @@ test('payment page loads same-origin payment.js permitted by CSP',async()=>{
   const env=mockEnv(await makeOrder(token));
   const response=await worker.fetch(new Request('https://mistbean.test/pay/'+token),env,{});
   const html=await response.text();
-  assert.match(html,/<script src="\\/payment\\.js" defer><\\/script>/);
+  assert.ok(html.includes('<script src="/payment.js" defer></script>'));
   assert.match(response.headers.get('content-security-policy'),/script-src 'self'/);
   assert.equal(response.headers.get('referrer-policy'),'no-referrer');
 });
