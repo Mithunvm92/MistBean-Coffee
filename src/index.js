@@ -247,7 +247,7 @@ async function createInvoice(env, order, actor) {
 
 async function api(request, env) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
-  const qrMatch = path.match(/^\/qr\/([A-Za-z0-9_-]{40,50})\.png$/);
+  const qrMatch = path.match(/^\/qr\/([A-Za-z0-9_-]{40,50})\.svg$/);
   if (qrMatch && method === 'GET') {
     if (!await allowPaymentPageRequest(request,env,'qr')) return fail('Too many payment page requests. Please try again shortly.',429);
     const order = await paymentOrderByToken(env,qrMatch[1]);
