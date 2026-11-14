@@ -271,7 +271,7 @@ async function api(request, env) {
     if (order.status === 'DISPATCHED') return page('Order dispatched','Your payment is verified and your order has been dispatched. Thank you for choosing MistBean Coffee.');
     if (['REJECTED','CANCELLED'].includes(order.status)) return page('Payment link inactive','This order is no longer accepting payments. Please contact MistBean if you need help.');
     if (order.payment_status === 'PAID') return page('Payment received','Your payment has been verified. Thank you for choosing MistBean Coffee.');
-    if (order.status !== 'CONFIRMED' && order.status !== 'PENDING_PAYMENT') return page('Order awaiting confirmation','MistBean has received your order. Payment instructions will be available after the order is confirmed.');
+    if (order.status !== 'CONFIRMED') return page('Order awaiting confirmation','MistBean has received your order. Payment instructions will be available after the order is confirmed.');
     if (order.payment_status === 'PAYMENT_SUBMITTED') return page('Payment submitted','Your UTR has been submitted. MistBean will verify the bank credit. You do not need to pay again.');
     if (order.payment_status !== 'UNPAID') return page('Payment status update','This order is not currently accepting payment. Please contact MistBean for assistance.');
     if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return page('Payment not ready','The final payable amount is not available yet. Please contact MistBean.');
