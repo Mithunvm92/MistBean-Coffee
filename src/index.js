@@ -248,7 +248,7 @@ async function createInvoice(env, order, actor) {
 
 async function api(request, env) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
-  const qrMatch = path.match(/^\\/qr\\/([A-Za-z0-9_-]{40,50})\\.png$/);
+  const qrMatch = path.match(/^\/qr\/([A-Za-z0-9_-]{40,50})\.png$/);
   if (qrMatch && method === 'GET') {
     if (!await allowPaymentPageRequest(request,env,'qr')) return fail('Too many payment page requests. Please try again shortly.',429);
     const order = await paymentOrderByToken(env,qrMatch[1]);
@@ -257,7 +257,7 @@ async function api(request, env) {
     const png = await QRCode.toBuffer(upiUri,{type:'png',width:320,margin:2,errorCorrectionLevel:'M'});
     return new Response(png,{status:200,headers:{...SECURITY_HEADERS,'content-type':'image/png','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}});
   }
-  const payMatch = path.match(/^\\/pay\\/([A-Za-z0-9_-]{40,50})$/);
+  const payMatch = path.match(/^\/pay\/([A-Za-z0-9_-]{40,50})$/);
   if (payMatch && method === 'GET') {
     if (!await allowPaymentPageRequest(request,env,'pay')) return fail('Too many payment page requests. Please try again shortly.',429);
     const token = payMatch[1];
