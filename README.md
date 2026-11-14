@@ -108,7 +108,7 @@ The admin page is intentionally a separate web page because a business WhatsApp 
 
 1. Install dependencies with `npm install` (this installs the QR generator and refreshes `package-lock.json`).
 2. Configure `UPI_ID`, `STORE_NAME` and `PUBLIC_BASE_URL` in local `.dev.vars`. `PUBLIC_BASE_URL` must be the public HTTPS origin for customer links (for local testing, leave it blank and Wrangler's localhost origin is used). Never store a UPI PIN, OTP or bank password.
-3. Apply migrations with `npm run db:local`, including `0009_order_payment_tokens.sql` and `0010_encrypt_payment_tokens.sql`.
+3. Apply migrations with `npm run db:local`, including `0009_order_payment_tokens.sql`, `0010_encrypt_payment_tokens.sql` and `0011_payment_submission_rate_limits.sql`.
 4. Run `npm run dev`.
 5. Customer places an order; it appears in /admin/.
 6. Owner confirms the order and enters delivery charge. The dashboard shows product subtotal, delivery and final payable amount.
