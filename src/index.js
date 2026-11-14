@@ -295,11 +295,11 @@ async function api(request, env) {
   }
   if (method === 'GET' && path === '/api/health') return json({ok:true, service:'mistbean-api', time:now()});
   if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env)});
-  const paymentSubmissionMatch = path.match(/^\\/api\\/payment-submissions\\/([A-Za-z0-9_-]{40,50})$/);
+  const paymentSubmissionMatch = path.match(/^\/api\/payment-submissions\/([A-Za-z0-9_-]{40,50})$/);
   if (paymentSubmissionMatch && method === 'POST') {
     if (!await allowPaymentSubmissionRequest(request,env)) return fail('Too many payment submissions. Please try again shortly.',429);
     let body; try { body = await request.json(); } catch { return fail('Invalid JSON.'); }
-    const reference = clean(body.reference,80).replace(/\\s+/g,'').toUpperCase();
+    const reference = clean(body.reference,80).replace(/\s+/g,'').toUpperCase();
     if (!/^[A-Z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI UTR or transaction reference (6–80 letters/numbers).');
     const token = paymentSubmissionMatch[1];
     const order = await paymentOrderByToken(env,token);
