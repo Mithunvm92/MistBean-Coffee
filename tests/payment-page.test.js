@@ -50,7 +50,7 @@ test('payment page shows the server payable amount and ignores request amount',a
   const response=await worker.fetch(new Request('https://mistbean.test/pay/'+token+'?amount=0'),env,{});
   const html=await response.text();
   assert.equal(response.status,200);
-  assert.match(html,/₹450\\.07/);
+  assert.match(html,/₹450\.07/);
   assert.match(html,/upi:\/\/pay/);
   assert.match(response.headers.get('cache-control'),/no-store/);
 });
