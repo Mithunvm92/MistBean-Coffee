@@ -299,6 +299,7 @@ async function api(request, env) {
   if (paymentSubmissionMatch && method === 'POST') {
     if (!await allowPaymentSubmissionRequest(request,env)) return fail('Too many payment submissions. Please try again shortly.',429);
     let body; try { body = await request.json(); } catch { return fail('Invalid JSON.'); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Invalid payment submission.');
     const reference = clean(body.reference,80).replace(/\s+/g,'').toUpperCase();
     if (!/^[A-Z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI UTR or transaction reference (6–80 letters/numbers).');
     const token = paymentSubmissionMatch[1];
