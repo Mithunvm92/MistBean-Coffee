@@ -430,7 +430,6 @@ async function api(request, env) {
         if(!Number.isSafeInteger(exactPayablePaise)||exactPayablePaise<1)return fail('The confirmed order total is invalid. Review the order before requesting payment.',409);
         await env.DB.prepare("UPDATE orders SET payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='CONFIRMED' AND payment_status='UNPAID'").bind(exactPayablePaise,now(),id).run();
         order.payable_paise=exactPayablePaise;
-        let paymentUrl;
         let paymentQrUrl;
         try {
           let token;
@@ -445,7 +444,6 @@ async function api(request, env) {
             if (!persisted?.pay_token_ciphertext) throw new Error('Payment link could not be created. Please retry.');
             token = await decryptPaymentToken(persisted.pay_token_ciphertext,env);
           }
-          paymentUrl = makePaymentUrl(env,url,token);
           paymentQrUrl = `/qr/${encodeURIComponent(token)}.png`;
           makeUpiUri(env,{...order,payable_paise:Number(order.payable_paise)});
         } catch(e) { return fail(e.message, 503); }
