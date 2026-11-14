@@ -73,14 +73,14 @@ test('paid order shows a status message and no payment action',async()=>{
   assert.match(html,/Payment received/);
   assert.doesNotMatch(html,/Pay with UPI app/);
 });
-test('QR endpoint returns a no-store PNG',async()=>{
+test('QR endpoint returns a no-store SVG',async()=>{
   const env=mockEnv(await makeOrder(token));
-  const response=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
+  const response=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.svg'),env,{});
   const bytes=new Uint8Array(await response.arrayBuffer());
   assert.equal(response.status,200);
-  assert.equal(response.headers.get('content-type'),'image/png');
+  assert.equal(response.headers.get('content-type'),'image/svg+xml; charset=utf-8');
   assert.equal(response.headers.get('cache-control'),'no-store');
-  assert.deepEqual([...bytes.slice(0,8)],[137,80,78,71,13,10,26,10]);
+  assert.match(new TextDecoder().decode(bytes), /<svg[\s>]/i);
 });
 
 test('pending order does not expose payment actions or QR',async()=>{
@@ -90,7 +90,7 @@ test('pending order does not expose payment actions or QR',async()=>{
   assert.equal(page.status,200);
   assert.match(html,/Order awaiting confirmation/);
   assert.doesNotMatch(html,/Pay with UPI app/);
-  const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
+  const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.svg'),env,{});
   assert.equal(qr.status,404);
 });
 test('payment-submitted order is shown as awaiting verification without another pay action',async()=>{
@@ -127,7 +127,7 @@ test('payment page loads same-origin payment.js permitted by CSP',async()=>{
 test('missing payment configuration returns 503 for QR instead of an unhandled error',async()=>{
   const env=mockEnv(await makeOrder(token));
   delete env.UPI_ID;
-  const response=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
+  const response=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.svg'),env,{});
   assert.equal(response.status,503);
   assert.match(await response.text(),/payment configuration is incomplete/i);
 });
@@ -138,7 +138,7 @@ test('legacy or unknown order states never expose a payment action',async()=>{
   const html=await response.text();
   assert.match(html,/Order awaiting confirmation/);
   assert.doesNotMatch(html,/Pay with UPI app/);
-  const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
+  const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.svg'),env,{});
   assert.equal(qr.status,404);
 });
 
