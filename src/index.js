@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
 import { buildUpiLink, formatPaise } from './payment-domain.js';
+import { verifyPassword } from './password.js';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -28,14 +29,6 @@ async function sha256(value) { return b64(await crypto.subtle.digest('SHA-256', 
 async function hmac(value, secret) {
   const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return b64(await crypto.subtle.sign('HMAC', key, enc.encode(value)));
-}
-async function verifyPassword(password, stored) {
-  const [kind, rounds, salt, expected] = String(stored || '').split('$');
-  if (kind !== 'pbkdf2' || !rounds || !salt || !expected) return false;
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: Uint8Array.from(salt.match(/../g).map(x => parseInt(x, 16))), iterations: Number(rounds), hash: 'SHA-256' }, key, 256);
-  const actual = [...new Uint8Array(bits)].map(x => x.toString(16).padStart(2, '0')).join('');
-  return actual.length === expected.length && [...actual].reduce((n, c, i) => n | (c.charCodeAt(0) ^ expected.charCodeAt(i)), 0) === 0;
 }
 async function createSession(env, email) {
   const payload = b64(enc.encode(JSON.stringify({ sub: email, exp: Date.now() + 8 * 60 * 60 * 1000, nonce: uuid() })));
