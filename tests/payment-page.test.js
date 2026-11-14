@@ -16,10 +16,21 @@ function mockEnv(order, overrides={}) {
         bind(...args){values=args;return this;},
         async first(){
           if(sql.includes('SELECT COUNT(*) AS n FROM payment_page_rate_limits'))return {n:0};
+          if(sql.includes('SELECT COUNT(*) AS n FROM payment_submission_rate_limits'))return {n:0};
           if(sql.includes('FROM orders WHERE pay_token_hash=?'))return tokenHash && values[0]===tokenHash ? order : null;
           return null;
         },
-        async run(){return {meta:{changes:1}};},
+        async run(){
+          if(sql.includes("SET payment_status='PAYMENT_SUBMITTED'")) {
+            if(!order || order.status!=='CONFIRMED' || order.payment_status!=='UNPAID') return {meta:{changes:0}};
+            order.payment_status='PAYMENT_SUBMITTED';
+            order.payment_submitted_reference=values[0];
+            order.payment_submitted_amount=values[1];
+            order.payment_submitted_at=values[2];
+            return {meta:{changes:1}};
+          }
+          return {meta:{changes:1}};
+        },
         async all(){return {results:[]};}
       };
     }
@@ -28,6 +39,7 @@ function mockEnv(order, overrides={}) {
 }
 async function makeOrder(tokenValue,status='CONFIRMED',paymentStatus='UNPAID') {
   return {
+    id:'order_internal_123',
     pay_token_hash:await hash(tokenValue),
     order_ref:'MB-261114-ABC123',
     product_name:'Arabica',
@@ -128,4 +140,49 @@ test('legacy or unknown order states never expose a payment action',async()=>{
   assert.doesNotMatch(html,/Pay with UPI app/);
   const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
   assert.equal(qr.status,404);
+});
+
+test('payment page renders a UTR submission form bound to the opaque token',async()=>{
+  const env=mockEnv(await makeOrder(token));
+  const response=await worker.fetch(new Request('https://mistbean.test/pay/'+token),env,{});
+  const html=await response.text();
+  assert.match(html,/id="paymentForm"/);
+  assert.match(html,/data-payment-token="/);
+  assert.match(html,/I have paid – submit UTR/);
+  assert.doesNotMatch(html,/data-order-ref=/);
+});
+test('customer can submit UTR using the payment token and the server records server-calculated amount',async()=>{
+  const order=await makeOrder(token);
+  const env=mockEnv(order);
+  const response=await worker.fetch(new Request('https://mistbean.test/api/payment-submissions/'+token,{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({reference:'123456789012'})
+  }),env,{});
+  assert.equal(response.status,200);
+  assert.equal(order.payment_status,'PAYMENT_SUBMITTED');
+  assert.equal(order.payment_submitted_reference,'123456789012');
+  assert.equal(order.payment_submitted_amount,450.07);
+  assert.match((await response.json()).message,/verify the bank credit/i);
+});
+test('customer cannot submit UTR twice or after the order is paid',async()=>{
+  const order=await makeOrder(token);
+  const env=mockEnv(order);
+  const request=()=>new Request('https://mistbean.test/api/payment-submissions/'+token,{
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reference:'123456789012'})
+  });
+  assert.equal((await worker.fetch(request(),env,{})).status,200);
+  assert.equal((await worker.fetch(request(),env,{})).status,409);
+});
+test('customer UTR submission rejects invalid references and unconfirmed orders',async()=>{
+  const invalidEnv=mockEnv(await makeOrder(token));
+  const invalid=await worker.fetch(new Request('https://mistbean.test/api/payment-submissions/'+token,{
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reference:'12!'})
+  }),invalidEnv,{});
+  assert.equal(invalid.status,400);
+  const pendingEnv=mockEnv(await makeOrder(token,'PENDING','UNPAID'));
+  const pending=await worker.fetch(new Request('https://mistbean.test/api/payment-submissions/'+token,{
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reference:'123456789012'})
+  }),pendingEnv,{});
+  assert.equal(pending.status,409);
 });
