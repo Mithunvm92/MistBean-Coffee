@@ -424,6 +424,12 @@ async function api(request, env) {
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
         if(order.payment_status==='PAYMENT_SUBMITTED')return fail('The customer has already submitted payment details. Verify the bank credit before sending another payment request.',409);
         if(order.payment_status!=='UNPAID')return fail('This order is not currently accepting payment requests.',409);
+        // Normalize older confirmed unpaid orders too: the payable amount is
+        // always exactly the stored order total, with no unique paise suffix.
+        const exactPayablePaise=Math.round(Number(order.total_amount)*100);
+        if(!Number.isSafeInteger(exactPayablePaise)||exactPayablePaise<1)return fail('The confirmed order total is invalid. Review the order before requesting payment.',409);
+        await env.DB.prepare("UPDATE orders SET payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='CONFIRMED' AND payment_status='UNPAID'").bind(exactPayablePaise,now(),id).run();
+        order.payable_paise=exactPayablePaise;
         let paymentUrl;
         try {
           let token;
