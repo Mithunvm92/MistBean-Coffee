@@ -38,3 +38,24 @@ export function canTransitionPayment(from, to) {
   };
   return (allowed[from] || []).includes(to);
 }
+export function formatPaise(amountPaise) {
+  if (!Number.isSafeInteger(amountPaise) || amountPaise < 0) throw new Error('Invalid amount in paise');
+  const rupees = Math.floor(amountPaise / 100);
+  const paise = String(amountPaise % 100).padStart(2, '0');
+  return String(rupees) + '.' + paise;
+}
+
+export function buildUpiLink({ upiId, storeName, amountPaise, orderId }) {
+  if (!upiId || !String(upiId).includes('@')) throw new Error('A valid UPI ID is required');
+  if (!storeName || !String(storeName).trim()) throw new Error('Store name is required');
+  if (!orderId || !String(orderId).trim()) throw new Error('Order reference is required');
+  if (!Number.isSafeInteger(amountPaise) || amountPaise < 1) throw new Error('Invalid amount in paise');
+  const params = new URLSearchParams({
+    pa: String(upiId),
+    pn: String(storeName).trim(),
+    am: formatPaise(amountPaise),
+    cu: 'INR',
+    tn: String(orderId)
+  });
+  return 'upi://pay?' + params.toString();
+}
