@@ -5,7 +5,7 @@ import worker from '../src/index.js';
 const token='A'.repeat(43);
 async function hash(value) {
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
-  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/g,'');
+  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
 }
 function mockEnv(order) {
   const tokenHash=order ? order.pay_token_hash : '';
