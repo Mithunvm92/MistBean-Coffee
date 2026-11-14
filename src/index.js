@@ -332,7 +332,7 @@ async function api(request, env) {
       const rows=await env.DB.prepare('SELECT id,name,description,active,in_stock,price_250,price_500,price_1000 FROM products ORDER BY name').all();
       return json({products:(rows.results||[]).map(p=>({...p,in_stock:Boolean(p.in_stock)}))});
     }
-    const stockMatch=path.match(/^\\/api\\/admin\\/products\\/([a-z0-9_-]+)\\/stock$/i);
+    const stockMatch=path.match(/^\/api\/admin\/products\/([a-z0-9_-]+)\/stock$/i);
     if(stockMatch && method==='PATCH') {
       let body;try{body=await request.json();}catch{return fail('Invalid JSON.');}
       if(typeof body.inStock!=='boolean')return fail('Choose Available or Out of stock.');
