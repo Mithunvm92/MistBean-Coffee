@@ -34,14 +34,12 @@ if (form) {
     message.className = 'notice';
     message.textContent = 'Submitting your payment details…';
     try {
-      const response = await fetch('/api/payment-submissions', {
+      const token = form.dataset.paymentToken;
+      if (!token) throw new Error('This payment link is incomplete. Reopen the link sent by MistBean.');
+      const response = await fetch('/api/payment-submissions/' + encodeURIComponent(token), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          orderRef: form.dataset.orderRef,
-          amount: Number(form.dataset.amount),
-          reference
-        })
+        body: JSON.stringify({ reference })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not submit payment details.');
