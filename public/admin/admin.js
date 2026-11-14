@@ -26,9 +26,9 @@ function canvasWrap(ctx,text,x,y,maxWidth,lineHeight,size,color,weight='400',max
 async function downloadPaymentCardPng(o,qrPath){
   const response=await fetch(qrPath,{credentials:'same-origin'});
   if(!response.ok){let message='Payment QR could not be generated.';try{const data=await response.json();message=data.error||message;}catch{}throw new Error(message);}
-  const qrBlob=await response.blob(),qrObjectUrl=URL.createObjectURL(qrBlob);
-  try{
-    const qrImage=new Image();qrImage.decoding='async';qrImage.src=qrObjectUrl;await qrImage.decode();
+  const qrSvg=await response.text();
+  {
+    const qrImage=new Image();qrImage.decoding='async';qrImage.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(qrSvg);await qrImage.decode();
     const canvas=document.createElement('canvas');canvas.width=1080;canvas.height=1350;
     const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Your browser could not create the payment card image.');
     ctx.fillStyle='#f4eee4';ctx.fillRect(0,0,1080,1350);
@@ -38,7 +38,7 @@ async function downloadPaymentCardPng(o,qrPath){
     canvasText(ctx,'COFFEE  |  FROM THE COORG HILLS',76,148,22,'#e2c69e','600');
     canvasText(ctx,'PAYMENT REQUEST',1008,95,24,'#f3dfbf','700','right');
     canvasText(ctx,'SCAN TO PAY',1008,135,20,'#fff','400','right');
-    canvasRoundRect(ctx,54,205,972,1088,30,'#fff');
+    canvasRoundRect(ctx,54,205,972,1125,30,'#fff');
     canvasText(ctx,'YOUR ORDER IS CONFIRMED',100,290,25,'#8a6745','700');
     canvasText(ctx,String(o.order_ref||''),100,350,38,'#302016','700');
     ctx.strokeStyle='#e8dfd3';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(100,382);ctx.lineTo(980,382);ctx.stroke();
@@ -64,7 +64,7 @@ async function downloadPaymentCardPng(o,qrPath){
     const pngUrl=URL.createObjectURL(png),anchor=document.createElement('a');
     anchor.href=pngUrl;anchor.download=`MistBean-${o.order_ref}-payment-card.png`;
     document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(pngUrl),5000);
-  }finally{URL.revokeObjectURL(qrObjectUrl);}
+  }
 }
 async function openWhatsAppAction(o,actionName){
   if(actionName==='payment-request'){
