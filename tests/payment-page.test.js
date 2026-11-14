@@ -119,3 +119,13 @@ test('missing payment configuration returns 503 for QR instead of an unhandled e
   assert.equal(response.status,503);
   assert.match(await response.text(),/payment configuration is incomplete/i);
 });
+
+test('legacy or unknown order states never expose a payment action',async()=>{
+  const env=mockEnv(await makeOrder(token,'PENDING_PAYMENT','UNPAID'));
+  const response=await worker.fetch(new Request('https://mistbean.test/pay/'+token),env,{});
+  const html=await response.text();
+  assert.match(html,/Order awaiting confirmation/);
+  assert.doesNotMatch(html,/Pay with UPI app/);
+  const qr=await worker.fetch(new Request('https://mistbean.test/qr/'+token+'.png'),env,{});
+  assert.equal(qr.status,404);
+});
