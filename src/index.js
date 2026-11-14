@@ -67,15 +67,6 @@ async function audit(env, action, orderId, actor, details = {}) {
   await env.DB.prepare('INSERT INTO audit_log(id,action,order_id,actor,details_json) VALUES(?,?,?,?,?)').bind(uuid(), action, orderId || null, actor, JSON.stringify(details)).run();
   if (orderId) await env.DB.prepare('INSERT INTO events(id,order_id,type,detail) VALUES(?,?,?,?)').bind(uuid(), orderId, action, JSON.stringify({ actor, ...details })).run();
 }
-async function uniquePayablePaise(env, orderId, totalRupees) {
-  for (let attempt = 0; attempt < 99; attempt++) {
-    const suffix = 1 + Math.floor(Math.random() * 99);
-    const payable = totalRupees * 100 + suffix;
-    const exists = await env.DB.prepare("SELECT id FROM orders WHERE payable_paise=? AND id<>? AND status NOT IN ('CANCELLED','REJECTED','DELIVERED') AND payment_status<>'PAID'").bind(payable, orderId).first();
-    if (!exists) return { payable, suffix };
-  }
-  throw new Error('Could not allocate a unique payment amount. Please retry.');
-}
 function orderRef() { return `MB-${new Date().toISOString().slice(2,10).replaceAll('-', '')}-${crypto.randomUUID().slice(0,6).toUpperCase()}`; }
 function validPhone(phone) { return /^[6-9]\d{9}$/.test(phone); }
 function clean(s, max) { return String(s ?? '').trim().slice(0, max); }
@@ -421,8 +412,9 @@ async function api(request, env) {
         if(order.status!=='PENDING')return fail('Only pending orders can be confirmed.',409);
         const delivery=Math.max(0,Math.min(100000,Math.round(Number(body.deliveryCharge)||0)));
         const finalTotal=Number(order.subtotal)+delivery;
-        let uniqueAmount; try { uniqueAmount=await uniquePayablePaise(env,id,finalTotal); } catch(e) { return fail(e.message,503); }
-        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,payable_paise=?,unique_amount_suffix=?,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,uniqueAmount.payable,uniqueAmount.suffix,now(),id).run();
+        const payablePaise=Math.round(finalTotal*100);
+        if(!Number.isSafeInteger(payablePaise)||payablePaise<1)return fail('The order total is invalid. Please review the order before confirming.',409);
+        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,payablePaise,now(),id).run();
         await audit(env,'ORDER_CONFIRMED',id,actor,{deliveryCharge:delivery});
         const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
         // Payment instructions are deliberately sent only after the admin clicks
