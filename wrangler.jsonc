@@ -21,6 +21,8 @@
     "SELLER_GSTIN": "",
     "FSSAI_LICENSE_NUMBER": "",
     "UPI_ID": "",
+    "STORE_NAME": "MistBean Coffee",
+    "PUBLIC_BASE_URL": "",
     "UPI_PAYEE_NAME": "MistBean Coffee"
   }
 }
