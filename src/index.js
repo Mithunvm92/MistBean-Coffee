@@ -252,7 +252,7 @@ async function api(request, env) {
   if (qrMatch && method === 'GET') {
     if (!await allowPaymentPageRequest(request,env,'qr')) return fail('Too many payment page requests. Please try again shortly.',429);
     const order = await paymentOrderByToken(env,qrMatch[1]);
-    if (!order || !['CONFIRMED','PENDING_PAYMENT'].includes(order.status) || !['UNPAID','PAYMENT_SUBMITTED'].includes(order.payment_status) || !Number.isSafeInteger(order.payable_paise) || order.payable_paise<1) return fail('Payment QR not found or no longer payable.',404);
+    if (!order || !['CONFIRMED','PENDING_PAYMENT'].includes(order.status) || order.payment_status !== 'UNPAID' || !Number.isSafeInteger(order.payable_paise) || order.payable_paise<1) return fail('Payment QR not found or no longer payable.',404);
     const upiUri = makeUpiUri(env,order);
     const png = await QRCode.toBuffer(upiUri,{type:'png',width:320,margin:2,errorCorrectionLevel:'M'});
     return new Response(png,{status:200,headers:{...SECURITY_HEADERS,'content-type':'image/png','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}});
