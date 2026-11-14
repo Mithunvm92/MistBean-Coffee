@@ -463,7 +463,7 @@ async function api(request, env) {
           `*PAYMENT*`,
           `Please scan the attached MistBean payment QR image to pay exactly ₹${formatPaise(order.payable_paise)}.`,
           `After payment, share your UPI UTR/reference here. We will verify the payment before dispatch.`,
-          `Please do not pay a different amount.`
+          `Please do not pay a different amount.`,
           ``,
           `Thank you for choosing MistBean Coffee.`
         ].join('\n');
