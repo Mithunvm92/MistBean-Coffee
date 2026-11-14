@@ -11,6 +11,7 @@ A deployable starter for MistBean's customer storefront, order intake API, priva
 - D1 schema for products, orders, admin sessions, audit events, webhook deduplication, rate-limit records and invoice sequence.
 - Private admin sign-in and order dashboard.
 - Confirm/reject orders, set delivery charge, verify payment, mark dispatch/delivery.
+- Admin product availability controls to mark each coffee Available or Out of stock; out-of-stock products remain visible to customers but cannot be ordered.
 - PDF invoice generation after payment verification, stored in private R2.
 - Copy-ready payment, invoice and shipping WhatsApp messages for manual sending.
 - No WhatsApp API integration or automatic message sending.
