@@ -106,6 +106,24 @@ function makeUpiUri(env, order) {
 function createPaymentToken() {
   return b64(crypto.getRandomValues(new Uint8Array(32)));
 }
+async function paymentTokenKey(env) {
+  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) throw new Error('Set a secure SESSION_SECRET before creating payment links.');
+  const raw = await crypto.subtle.digest('SHA-256',enc.encode(env.SESSION_SECRET));
+  return crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);
+}
+async function encryptPaymentToken(token,env) {
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},await paymentTokenKey(env),enc.encode(token));
+  const combined=new Uint8Array(iv.length+encrypted.byteLength);
+  combined.set(iv);combined.set(new Uint8Array(encrypted),iv.length);
+  return b64(combined);
+}
+async function decryptPaymentToken(value,env) {
+  const combined=unb64(value);
+  const iv=combined.slice(0,12),ciphertext=combined.slice(12);
+  const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv},await paymentTokenKey(env),ciphertext);
+  return dec.decode(decrypted);
+}
 async function allowPaymentPageRequest(request, env, route) {
   const ipHash = await sha256(request.headers.get('cf-connecting-ip') || 'unknown');
   await env.DB.prepare("DELETE FROM payment_page_rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
@@ -375,8 +393,13 @@ async function api(request, env) {
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
         let paymentUrl;
         try {
-          const token = createPaymentToken();
-          await env.DB.prepare('UPDATE orders SET pay_token_hash=?,updated_at=? WHERE id=?').bind(await sha256(token),now(),id).run();
+          let token;
+          if (order.pay_token_ciphertext && order.pay_token_hash) token = await decryptPaymentToken(order.pay_token_ciphertext,env);
+          else {
+            token = createPaymentToken();
+            await env.DB.prepare('UPDATE orders SET pay_token_hash=?,pay_token_ciphertext=?,updated_at=? WHERE id=?')
+              .bind(await sha256(token),await encryptPaymentToken(token,env),now(),id).run();
+          }
           paymentUrl = makePaymentUrl(env,url,token);
           makeUpiUri(env,{...order,payable_paise:Number(order.payable_paise)});
         } catch(e) { return fail(e.message, 503); }
