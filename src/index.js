@@ -1,6 +1,9 @@
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'referrer-policy': 'strict-origin-when-cross-origin',
+  'cross-origin-resource-policy': 'same-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 };
