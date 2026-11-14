@@ -106,16 +106,18 @@ The admin page is intentionally a separate web page because a business WhatsApp 
 
 ## Manual WhatsApp + UPI workflow
 
-1. Configure UPI_ID, UPI_PAYEE_NAME and PUBLIC_BASE_URL as needed. Never store a UPI PIN, OTP or bank password.
-2. Run npm run db:local and npm run dev.
+1. Configure `UPI_ID`, `STORE_NAME` and `PUBLIC_BASE_URL` in local `.dev.vars`. `PUBLIC_BASE_URL` must be the public HTTPS origin for customer links (for local testing, leave it blank and Wrangler's localhost origin is used). Never store a UPI PIN, OTP or bank password.
+2. Apply migrations with `npm run db:local`, including `0009_order_payment_tokens.sql` and `0010_encrypt_payment_tokens.sql`.
+3. Run `npm install` after pulling this change so the `qrcode` dependency is installed and `package-lock.json` is refreshed.
+4. Run `npm run dev`.
 3. Customer places an order; it appears in /admin/.
 4. Owner confirms the order and enters delivery charge. The dashboard shows product subtotal, delivery and final payable amount.
-5. Choose Request Payment. The app opens the customer's WhatsApp chat with a payment-page link. Review and press Send manually. The customer opens the branded payment page and can tap Pay using UPI app, scan the order-specific QR, or copy the UPI ID.
+5. Choose Request Payment. The app opens the customer's WhatsApp chat with a high-entropy tokenised HTTPS payment-page link. Review and press Send manually. The customer opens the branded payment page and can tap Pay with UPI app on mobile, scan the locally generated order-specific QR, or copy the UPI ID. The token is stored as a hash for lookup and encrypted for secure link resends.
 6. Customer pays and shares UTR/screenshot. Owner independently checks the bank app, enters the UTR and marks payment PAID.
 7. Generate invoice, download its PDF, copy the invoice message, open WhatsApp, attach the PDF and press Send manually. Then mark invoice sent.
 8. Enter courier/tracking details. Copy the shipping update, open WhatsApp and send manually. Mark dispatched only after sending.
 
-No message is sent by the server. A UTR or screenshot alone never proves payment. The payment page's UPI deep link and QR prefill the exact order amount and order reference. UPI app availability and deep-link handling depend on the customer's device. The customer must review the payee and amount before authorising payment. Localhost payment links are not reachable by external customers; set PUBLIC_BASE_URL to the public HTTPS storefront origin before real customer orders.
+No message is sent by the server. A UTR or screenshot alone never proves payment. The payment page's UPI deep link and locally generated QR prefill the exact server-computed `payable_paise` amount and order reference. The payment page and QR routes are no-store and have application-level per-IP rate limits. Re-sending a payment request reuses the same encrypted token, so previously shared links remain valid. UPI app availability and deep-link handling depend on the customer's device. The customer must review the payee and amount before authorising payment. Localhost payment links are not reachable by external customers; set PUBLIC_BASE_URL to the public HTTPS storefront origin before real customer orders.
 
 ## Local integration test build and security notes
 
