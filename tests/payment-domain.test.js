@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateTotalPaise, allocateUniquePayablePaise, matchUtrPayment, canTransitionPayment } from '../src/payment-domain.js';
+import { calculateTotalPaise, allocateUniquePayablePaise, matchUtrPayment, canTransitionPayment, formatPaise, buildUpiLink } from '../src/payment-domain.js';
 
 test('calculates order totals using integer paise', () => {
   assert.equal(calculateTotalPaise([{sku:'coffee',quantity:2}], {coffee:45000}, 100), 90100);
@@ -17,4 +17,19 @@ test('rejects invalid payment status transitions', () => {
   assert.equal(canTransitionPayment('PENDING_PAYMENT','PAID'), false);
   assert.equal(canTransitionPayment('PAYMENT_SUBMITTED','PAID'), true);
   assert.equal(canTransitionPayment('SHIPPED','PAID'), false);
+});
+
+test('formats integer paise without floating point rounding', () => {
+  assert.equal(formatPaise(45007), '450.07');
+  assert.equal(formatPaise(100), '1.00');
+  assert.equal(formatPaise(5), '0.05');
+});
+test('builds an encoded UPI link', () => {
+  const link = buildUpiLink({ upiId:'merchant@upi', storeName:'MistBean & Co', amountPaise:45007, orderId:'MB/2026 #1' });
+  const parsed = new URL(link);
+  assert.equal(parsed.protocol, 'upi:');
+  assert.equal(parsed.searchParams.get('pa'), 'merchant@upi');
+  assert.equal(parsed.searchParams.get('pn'), 'MistBean & Co');
+  assert.equal(parsed.searchParams.get('am'), '450.07');
+  assert.equal(parsed.searchParams.get('tn'), 'MB/2026 #1');
 });
