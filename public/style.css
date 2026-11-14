@@ -373,3 +373,23 @@ body[data-theme="dark"] .legal-note {
 button:focus-visible,a:focus-visible{outline:3px solid #d5a16f;outline-offset:3px}
 @media(max-width:820px){.footer-grid{grid-template-columns:1fr 1fr;gap:24px}}
 @media(max-width:560px){.announcement{padding:13px 12px}.announcement-inner{width:100%;gap:4px 10px}.announcement-kicker{font-size:10px}.announcement-inner strong{font-size:13px}.announcement-inner>span:not(.announcement-kicker){font-size:12px}.announcement-origin{font-size:11px!important}.site-footer{padding:30px 0 18px}.footer-grid{grid-template-columns:1fr;gap:20px}.footer-legal{padding-top:16px}.footer-bottom{flex-direction:column;gap:5px}.footer-grid section{gap:7px}}
+
+
+/* Compact, aligned footer: keep policy copy collapsed until requested. */
+.site-footer{padding:28px 0 14px}
+.footer-grid{grid-template-columns:minmax(0,1.25fr) repeat(2,minmax(145px,.85fr)) minmax(0,1.15fr);gap:22px;align-items:start;padding-bottom:18px}
+.footer-grid section{align-self:start;gap:7px}
+.footer-grid section>span,.footer-grid section>a{line-height:1.45}
+.footer-brand{line-height:1.15;margin-bottom:2px}
+.footer-policies{max-width:100%;padding-top:10px;border-bottom:1px solid #536253}
+.footer-legal{max-width:100%;padding:0;border-top:1px solid #405044}
+.footer-legal summary{position:relative;list-style:none;cursor:pointer;padding:10px 26px 10px 0;color:#f4dfc1;font-size:12px;font-weight:750}
+.footer-legal summary::-webkit-details-marker{display:none}
+.footer-legal summary:after{content:"+";position:absolute;right:4px;top:7px;font-size:17px;color:#d9e4d5}
+.footer-legal[open] summary:after{content:"−"}
+.footer-legal p{max-width:900px;margin:0 0 12px;font-size:11px;line-height:1.55;color:#d2dbce}
+.footer-bottom{align-items:center;padding-top:13px;font-size:10px}
+.footer-bottom span{display:inline-block}
+@media(max-width:820px){.footer-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.footer-grid section{min-width:0}}
+@media(max-width:560px){.site-footer{padding:23px 0 12px}.footer-grid{grid-template-columns:1fr 1fr;gap:17px 14px;padding-bottom:14px}.footer-grid section{gap:6px}.footer-brand{font-size:22px}.footer-grid h2{font-size:12px}.footer-grid section>span,.footer-grid section>a,.footer-grid p{font-size:11px;overflow-wrap:anywhere}.footer-small{font-size:10px}.footer-policies{padding-top:7px}.footer-legal summary{padding:9px 24px 9px 0;font-size:11px}.footer-legal p{font-size:10px}.footer-bottom{flex-direction:row;justify-content:space-between;align-items:flex-start;gap:8px;font-size:9px}.footer-bottom span:last-child{text-align:right}}
+@media(max-width:380px){.footer-grid{grid-template-columns:1fr}.footer-bottom{flex-direction:column}.footer-bottom span:last-child{text-align:left}}
