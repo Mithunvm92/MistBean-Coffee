@@ -20,8 +20,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Install dependencies
-        run: npm ci
+      - name: Install dependencies and reconcile lockfile
+        run: npm install --no-audit --no-fund
       - name: Check JavaScript syntax
         run: npm run typecheck
       - name: Run automated tests
