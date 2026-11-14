@@ -5,3 +5,5 @@
 .sent-label{display:inline-flex;align-items:center;padding:8px 12px;border-radius:8px;background:#e4eee3;color:#2f5635;font-size:.83rem;font-weight:700}
 
 .test-warning{margin:18px 0;padding:12px 14px;border:1px solid #d8a34d;background:#fff2d8;color:#70450b;border-radius:10px;font-weight:750;font-size:.86rem}
+
+.stock-panel{margin:20px 0}.stock-list{display:grid;gap:10px}.stock-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border:1px solid #e7e2d7;border-radius:10px;background:#fff}.stock-row strong{display:inline-block;margin-right:10px}.stock-pill{display:inline-block;padding:4px 8px;border-radius:20px;font-size:.72rem;font-weight:800}.stock-pill.available{background:#e4eee3;color:#2f5635}.stock-pill.unavailable{background:#f6e6df;color:#8a3928}.stock-toggle{white-space:nowrap}.stock-toggle.good{background:#e4eee3;color:#2f5635}@media(max-width:520px){.stock-row{align-items:flex-start;flex-direction:column}.stock-toggle{width:100%}}
