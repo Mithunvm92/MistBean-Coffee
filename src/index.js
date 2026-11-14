@@ -431,6 +431,7 @@ async function api(request, env) {
         await env.DB.prepare("UPDATE orders SET payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='CONFIRMED' AND payment_status='UNPAID'").bind(exactPayablePaise,now(),id).run();
         order.payable_paise=exactPayablePaise;
         let paymentUrl;
+        let paymentQrUrl;
         try {
           let token;
           if (order.pay_token_ciphertext && order.pay_token_hash) token = await decryptPaymentToken(order.pay_token_ciphertext,env);
@@ -445,6 +446,7 @@ async function api(request, env) {
             token = await decryptPaymentToken(persisted.pay_token_ciphertext,env);
           }
           paymentUrl = makePaymentUrl(env,url,token);
+          paymentQrUrl = `/qr/${encodeURIComponent(token)}.png`;
           makeUpiUri(env,{...order,payable_paise:Number(order.payable_paise)});
         } catch(e) { return fail(e.message, 503); }
         if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return fail('Confirmed payable amount is missing. Reconfirm this order before requesting payment.',409);
@@ -461,16 +463,16 @@ async function api(request, env) {
           `*AMOUNT TO PAY: ₹${formatPaise(order.payable_paise)}*`,
           ``,
           `*PAYMENT*`,
-          `UPI ID: ${clean(env.UPI_ID,120)}`,
-          `Pay securely: ${paymentUrl}`,
+          `Please scan the attached MistBean payment QR image to pay exactly ₹${formatPaise(order.payable_paise)}.`,
           `After payment, share your UPI UTR/reference here. We will verify the payment before dispatch.`,
+          `Please do not pay a different amount.`
           ``,
           `Thank you for choosing MistBean Coffee.`
         ].join('\n');
         const chatUrl=whatsappChatUrl(order.customer_phone,message);
         await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
         await env.DB.prepare('UPDATE orders SET payment_request_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
-        return json({ok:true,whatsappUrl:chatUrl,paymentUrl,totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
+        return json({ok:true,whatsappUrl:chatUrl,qrUrl:paymentQrUrl,totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
       } else if(action==='reject'){
         if(order.status!=='PENDING')return fail('Only pending orders can be rejected.',409);
         const reason=clean(body.reason,300); if(!reason)return fail('Please provide a rejection reason.');
