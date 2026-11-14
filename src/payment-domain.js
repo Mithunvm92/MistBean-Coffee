@@ -9,19 +9,6 @@ export function calculateTotalPaise(items, priceBySku, deliveryPaise = 0) {
   if (!Number.isSafeInteger(total)) throw new Error('Order total is outside the supported range');
   return total;
 }
-export function allocateUniquePayablePaise(totalPaise, usedAmounts, random = Math.random) {
-  if (!Number.isSafeInteger(totalPaise) || totalPaise < 1) throw new Error('Invalid total in paise');
-  if (!usedAmounts || typeof usedAmounts.has !== 'function') throw new Error('Invalid used amounts collection');
-  const randomValue = random();
-  if (!Number.isFinite(randomValue) || randomValue < 0 || randomValue >= 1) throw new Error('Invalid random value');
-  const startSuffix = 1 + Math.floor(randomValue * 99);
-  for (let offset = 0; offset < 99; offset++) {
-    const suffix = 1 + ((startSuffix - 1 + offset) % 99);
-    const payable = totalPaise + suffix;
-    if (!usedAmounts.has(payable)) return { payablePaise: payable, suffixPaise: suffix };
-  }
-  throw new Error('No unique paise amount is available');
-}
 export function matchUtrPayment({ submittedUtr, submittedPaise, bankUtr, bankPaise }) {
   if (!submittedUtr || !bankUtr) return false;
   return String(submittedUtr).trim().toUpperCase() === String(bankUtr).trim().toUpperCase()
