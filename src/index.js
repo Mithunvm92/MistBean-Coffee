@@ -298,7 +298,10 @@ async function api(request, env) {
   const paymentSubmissionMatch = path.match(/^\/api\/payment-submissions\/([A-Za-z0-9_-]{40,50})$/);
   if (paymentSubmissionMatch && method === 'POST') {
     if (!await allowPaymentSubmissionRequest(request,env)) return fail('Too many payment submissions. Please try again shortly.',429);
-    let body; try { body = await request.json(); } catch { return fail('Invalid JSON.'); }
+    if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return fail('Content-Type must be application/json.',415);
+    const rawBody = await request.text();
+    if (rawBody.length > 2048) return fail('Payment submission is too large.',413);
+    let body; try { body = JSON.parse(rawBody); } catch { return fail('Invalid JSON.'); }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Invalid payment submission.');
     const reference = clean(body.reference,80).replace(/\s+/g,'').toUpperCase();
     if (!/^[A-Z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI UTR or transaction reference (6–80 letters/numbers).');
