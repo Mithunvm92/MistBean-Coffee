@@ -19,7 +19,7 @@ export async function verifyPassword(password, stored) {
   if (parts.length !== 4) return false;
 
   const [kind, roundsText, saltHex, expectedHex] = parts;
-  if (kind !== 'pbkdf2' || !/^\\d+$/.test(roundsText)) return false;
+  if (kind !== 'pbkdf2' || !/^\d+$/.test(roundsText)) return false;
 
   const rounds = Number(roundsText);
   if (!Number.isSafeInteger(rounds) || rounds < MIN_ITERATIONS || rounds > MAX_ITERATIONS) return false;
