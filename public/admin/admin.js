@@ -22,7 +22,7 @@ async function action(o,actionName,body={}){try{await api(`/api/admin/orders/${o
 async function generateInvoiceAndSend(o){const popup=window.open('about:blank','_blank');try{const d=await api(`/api/admin/orders/${o.id}/invoice`,{method:'POST',body:'{}'});if(d.message){await navigator.clipboard.writeText(d.message);}if(d.whatsappUrl){if(popup)popup.location=d.whatsappUrl;else window.location.href=d.whatsappUrl;alert('Invoice generated. Message copied. In WhatsApp, attach the downloaded invoice PDF and press Send yourself.');}else{if(popup)popup.close();alert('Invoice generated.');}await loadOrders();}catch(e){if(popup)popup.close();$('appError').textContent=e.message;}}
 function canvasRoundRect(ctx,x,y,w,h,r,fill){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill();}}
 function canvasText(ctx,text,x,y,size,color,weight='400',align='left'){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(String(text??''),x,y);}
-function canvasWrap(ctx,text,x,y,maxWidth,lineHeight,size,color,weight='400',maxLines=2){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign='left';const words=String(text??'').split(/\\s+/);let line='',lines=[];for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word;}else line=test;}if(line)lines.push(line);lines.slice(0,maxLines).forEach((value,i)=>ctx.fillText(value,x,y+i*lineHeight));return Math.min(lines.length,maxLines);}
+function canvasWrap(ctx,text,x,y,maxWidth,lineHeight,size,color,weight='400',maxLines=2){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign='left';const words=String(text??'').split(/\s+/);let line='',lines=[];for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word;}else line=test;}if(line)lines.push(line);lines.slice(0,maxLines).forEach((value,i)=>ctx.fillText(value,x,y+i*lineHeight));return Math.min(lines.length,maxLines);}
 async function downloadPaymentCardPng(o,qrPath){
   const response=await fetch(qrPath,{credentials:'same-origin'});
   if(!response.ok){let message='Payment QR could not be generated.';try{const data=await response.json();message=data.error||message;}catch{}throw new Error(message);}
@@ -69,7 +69,7 @@ async function downloadPaymentCardPng(o,qrPath){
 async function openWhatsAppAction(o,actionName){
   if(actionName==='payment-request'){
     const payable=Number(o.payable_paise||Math.round(Number(o.total_amount)*100))/100;
-    const preview=`PAYMENT REQUEST PREVIEW\\n\\nOrder: ${o.order_ref}\\nCustomer: ${o.customer_name}\\nProduct: ${o.product_name} · ${o.pack_grams}g × ${o.quantity}\\n\\nProduct subtotal: ${money(o.subtotal)}\\nDelivery fee: ${money(o.delivery_charge)}\\nFinal UPI amount: ${money(payable)}\\n\\nGenerate the branded payment card and open WhatsApp?`;
+    const preview=`PAYMENT REQUEST PREVIEW\n\nOrder: ${o.order_ref}\nCustomer: ${o.customer_name}\nProduct: ${o.product_name} · ${o.pack_grams}g × ${o.quantity}\n\nProduct subtotal: ${money(o.subtotal)}\nDelivery fee: ${money(o.delivery_charge)}\nFinal UPI amount: ${money(payable)}\n\nGenerate the branded payment card and open WhatsApp?`;
     if(!confirm(preview))return;
   }
   const popup=window.open('about:blank','_blank');
