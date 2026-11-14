@@ -10,13 +10,14 @@
 8. Confirm the order with a test delivery charge. Verify the total equals subtotal plus delivery.
 9. Click **Send UPI payment link on WhatsApp** in mock mode. Check that the prefilled message contains an HTTPS localhost `/pay/{43-character-random-token}` link and the confirmed amount. The URL must not contain the internal order ID or public order reference as its security token.
 10. Open the payment link. A confirmed unpaid order should render the branded payment page with a server-generated `upi://pay` deep link and a local `/qr/{token}.png` QR image. The page must use the same server-computed amount for both. Check that unknown tokens return 404; pending orders show awaiting confirmation without a payment action; payment-submitted orders show awaiting verification; paid orders show payment received; dispatched/delivered orders show fulfilment status; rejected/cancelled orders cannot be paid.
-11. Verify the payment page and QR endpoints return `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, and enforce application-level rate limits. Missing UPI configuration must return a clear 503 payment-unavailable response without breaking storefront or admin routes.
-12. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
-13. Mark dispatched and delivered.
-14. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
-15. Try the admin API without a session; it should return 401.
-16. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
-17. Confirm `/api/health` returns `ok: true`.
+11. Submit a test UTR from the payment page. Confirm the request uses the opaque payment token (not an order ID or public order reference), stores the UTR and server-calculated amount, and changes `payment_status` to `PAYMENT_SUBMITTED`. Confirm a second submission is rejected and the payment page no longer offers another payment action.
+12. Verify the payment page, QR and UTR submission endpoints return `Cache-Control: no-store`, payment-page responses use `Referrer-Policy: no-referrer`, and each endpoint enforces application-level rate limits. Missing UPI configuration must return a clear 503 payment-unavailable response without breaking storefront or admin routes.
+13. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
+14. Mark dispatched and delivered.
+15. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
+16. Try the admin API without a session; it should return 401.
+17. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
+18. Confirm `/api/health` returns `ok: true`.
 
 ## Not covered by automated tests yet
 
