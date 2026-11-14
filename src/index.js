@@ -261,24 +261,6 @@ async function api(request, env) {
     const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#302016"><title>Pay ₹'+amount+' | MistBean Coffee</title><style>*{box-sizing:border-box}body{margin:0;padding:24px 16px;background:#f4efe6;color:#302016;font-family:Arial,sans-serif}.card{max-width:540px;margin:24px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px #30201618}.head{background:#302016;color:#fff;padding:24px 28px;border-bottom:5px solid #b8874d}.brand{font-size:25px;font-weight:800;letter-spacing:1px}.sub{color:#e2c69e;font-size:12px;margin-top:5px}.body{padding:26px}.muted{color:#74695f;font-size:13px}.amount{font-size:34px;font-weight:800;margin:8px 0 20px}.pay{display:block;text-align:center;background:#2d7046;color:#fff;text-decoration:none;padding:17px;border-radius:10px;font-weight:800;font-size:17px;margin:20px 0}.copy-row{display:flex;align-items:center;gap:10px;justify-content:space-between;background:#faf7f1;border:1px solid #eee5d9;border-radius:10px;padding:12px;margin-top:12px;word-break:break-all}.copy-row button{border:0;border-radius:7px;background:#302016;color:#fff;padding:9px 12px;font-weight:700;flex-shrink:0}.qr{text-align:center;background:#faf7f1;border:1px solid #eee5d9;border-radius:12px;padding:16px;margin-top:18px}.qr img{width:240px;height:240px;max-width:100%;image-rendering:pixelated}.hint{font-size:13px;line-height:1.5;color:#655b52}.item{padding:14px 0;border-bottom:1px solid #eee5d9;line-height:1.6}.foot{text-align:center;padding:0 24px 24px;color:#74695f;font-size:12px}@media(min-width:769px){.pay{display:none}}@media(max-width:600px){body{padding:8px}.card{margin:8px auto}.head{padding:20px}.body{padding:20px}.amount{font-size:32px}}</style></head><body><main class="card"><header class="head"><div class="brand">'+esc(storeName)+'</div><div class="sub">SECURE ORDER PAYMENT</div></header><section class="body"><div class="muted">PAYMENT FOR ORDER</div><h2 style="margin:6px 0">'+esc(order.order_ref)+'</h2><div class="muted">TOTAL PAYABLE</div><div class="amount">₹'+amount+'</div><a class="pay" href="'+esc(upiUri)+'" rel="noreferrer">Pay with UPI app</a><p class="hint">On your phone, tap the button to open a compatible UPI app with the amount pre-filled. Review the payee and exact amount before approving.</p><div class="copy-row"><span><strong>UPI ID</strong><br><span>'+esc(upiId)+'</span></span><button type="button" id="copyUpi">Copy UPI ID</button></div><div class="item"><strong>'+esc(order.product_name)+' · '+esc(order.pack_grams)+'g × '+esc(order.quantity)+'</strong><br><span class="muted">The amount includes the confirmed delivery charge.</span></div><div class="qr"><strong>Scan &amp; Pay with any UPI app</strong><p class="hint">Scan this QR using another phone. It contains the same UPI payment details and exact amount.</p><img src="'+qrUrl+'" alt="Order-specific UPI payment QR code" width="240" height="240"><p class="hint">Pay exactly ₹'+amount+'. After payment, send your 12-digit UTR on WhatsApp. MistBean will verify the bank credit manually.</p></div></section><footer class="foot">MistBean Coffee · Payment is complete only after bank verification.</footer></main><script>document.getElementById("copyUpi").addEventListener("click",async()=>{try{await navigator.clipboard.writeText('+JSON.stringify(upiId)+');document.getElementById("copyUpi").textContent="Copied";}catch{document.getElementById("copyUpi").textContent="Copy unavailable";}});</script></body></html>';
     return new Response(html,{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
   }
-  if (path === '/api/payment-submissions' && method === 'POST') {
-    let body; try { body = await request.json(); } catch { return fail('Invalid payment confirmation details.'); }
-    const ref = clean(body.orderRef, 40).toUpperCase();
-    const reference = clean(body.reference, 80);
-    const amount = Math.round(Number(body.amount) * 100);
-    if (!/^MB-[A-Z0-9-]{8,32}$/.test(ref)) return fail('Invalid order reference.');
-    if (!/^[A-Za-z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI transaction ID / UTR / RRN.');
-    const order = await env.DB.prepare('SELECT id,order_ref,total_amount,payable_paise,status,payment_status FROM orders WHERE order_ref=?').bind(ref).first();
-    if (!order) return fail('Order not found. Check the payment link.', 404);
-    if (!['CONFIRMED','PENDING_PAYMENT'].includes(order.status)) return fail('This order is not yet ready for payment.', 409);
-    if (order.payment_status === 'PAID') return fail('Payment is already verified for this order.', 409);
-    if (!Number.isFinite(amount) || amount !== Number(order.payable_paise || order.total_amount*100)) return fail('The amount entered does not match the confirmed order payable amount.', 400);
-    const submittedAt = now();
-    await env.DB.prepare("UPDATE orders SET payment_submitted_reference=?,payment_submitted_amount=?,payment_submitted_at=?,payment_status='PAYMENT_SUBMITTED',updated_at=? WHERE id=? AND payment_status<>'PAID'")
-      .bind(reference, amount, submittedAt, submittedAt, order.id).run();
-    await audit(env, 'CUSTOMER_PAYMENT_DETAILS_SUBMITTED', order.id, 'customer', { reference, amount });
-    return json({ ok:true, status:'PENDING_VERIFICATION', message:'Payment details received. MistBean will verify the bank credit.' });
-  }
   if (method === 'GET' && path === '/api/health') return json({ok:true, service:'mistbean-api', time:now()});
   if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env)});
   if (method === 'POST' && path === '/api/orders') {
@@ -392,7 +374,13 @@ async function api(request, env) {
         if(order.status!=='CONFIRMED')return fail('Confirm the order and delivery charge before sending payment details.',409);
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
         let paymentUrl;
-        try { paymentUrl = makePaymentUrl(env, url, order); } catch(e) { return fail(e.message, 503); }
+        try {
+          const token = createPaymentToken();
+          await env.DB.prepare('UPDATE orders SET pay_token_hash=?,updated_at=? WHERE id=?').bind(await sha256(token),now(),id).run();
+          paymentUrl = makePaymentUrl(env,url,token);
+          makeUpiUri(env,{...order,payable_paise:Number(order.payable_paise)});
+        } catch(e) { return fail(e.message, 503); }
+        if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return fail('Confirmed payable amount is missing. Reconfirm this order before requesting payment.',409);
         const message=[
           `☕ *MISTBEAN COFFEE*`,
           `*Payment request*`,
@@ -403,7 +391,7 @@ async function api(request, env) {
           `${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
           `Products: ₹${order.subtotal}`,
           `Delivery: ₹${order.delivery_charge}`,
-          `*AMOUNT TO PAY: ₹${(Number(order.payable_paise||order.total_amount*100)/100).toFixed(2)}*`,
+          `*AMOUNT TO PAY: ₹${formatPaise(order.payable_paise)}*`,
           ``,
           `*PAYMENT*`,
           `UPI ID: ${clean(env.UPI_ID,120)}`,
@@ -521,7 +509,7 @@ async function api(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url=new URL(request.url);
-    if(url.pathname.startsWith('/api/') || url.pathname.startsWith('/pay/')) {
+    if(url.pathname.startsWith('/api/') || url.pathname.startsWith('/pay/') || url.pathname.startsWith('/qr/')) {
       try { return await api(request,env); }
       catch(error){ console.error('API error',error); return fail('An unexpected server error occurred.',500); }
     }
