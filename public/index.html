@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="topline">TEST MODE · Single-digit test prices · Do not use for commercial orders</div><div class="topline">Coffee inspired by the hills of Coorg · Karnataka</div>
+<div class="announcement" role="note" aria-label="Store announcement"><div class="announcement-inner"><span class="announcement-kicker">MISTBEAN COFFEE</span><strong>Preview store · Test mode</strong><span>Prices and business details are placeholders. Please do not place commercial orders.</span><span class="announcement-origin">Coffee inspired by the hills of Coorg, Karnataka</span></div></div>
 <header><nav class="nav">
 <a class="logo" href="#" id="homeLogo"><span class="mark">M</span><span><span class="wordmark">MistBean Coffee</span><span class="submark">From the Coorg Hills</span></span></a>
 <div class="nav-tools"><span class="nav-note" id="navNote">Find your everyday coffee</span><button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch to dark mode" title="Switch theme">☾ <span>Dark mode</span></button></div>
@@ -48,10 +48,16 @@
 </div>
 <div class="origin-strip"><div class="wrap origin-inner"><strong>From the Coorg hills to your cup.</strong><span>Choose your coffee · Customise your order · Confirm with us on WhatsApp</span></div></div>
 <div class="community-panel"><div class="wrap community-inner"><div class="community-copy"><h2>Enjoying MistBean?</h2><p>Tap like to show your support. Demo likes are counted on this device only.</p></div><div class="community-actions"><button class="like-button" id="likeButton" type="button" aria-pressed="false">♡ Like our coffee</button><span class="like-count" id="likeCount">0 likes on this device</span><button class="share-button" id="shareButton" type="button">↗ Share MistBean</button></div></div></div>
-<footer><div class="wrap">
- <div class="social-row"><span aria-label="Instagram">◎ Instagram · Coming soon</span><span aria-label="Facebook">f Facebook · Coming soon</span><a href="https://wa.me/919740558594" target="_blank" rel="noopener">WhatsApp</a></div>
- <div>© <span id="year"></span> MistBean Coffee · Orders are subject to availability and confirmation by MistBean.</div>
- <div class="legal-note">Business registration and food licence details will be displayed here before commercial launch.</div>
+<footer class="site-footer"><div class="wrap"><div class="footer-grid">
+ <section><div class="footer-brand">MistBean Coffee</div><p>Coffee inspired by the hills of Coorg, Karnataka.</p><p class="footer-small">Thoughtfully selected coffee for your everyday cup.</p></section>
+ <section><h2>Customer care</h2><a href="https://wa.me/919740558594" target="_blank" rel="noopener noreferrer">WhatsApp support</a><span class="footer-small">Email support · Contact us through WhatsApp for now</span><span class="footer-small">Instagram · Coming soon</span></section>
+ <section><h2>Policies</h2><a href="#terms">Terms &amp; conditions</a><a href="#privacy">Privacy notice</a><a href="#shipping">Shipping &amp; returns</a><a href="#food-info">Food business information</a></section>
+ <section id="food-info"><h2>Seller information</h2><span>Business: MistBean Coffee</span><span>Location: Coorg, Karnataka, India</span><span>FSSAI licence: Placeholder — to be updated before commercial sales</span><span>Registered address: To be updated before commercial sales</span><span>GSTIN: Not provided</span></section>
+ </div>
+ <div class="footer-legal" id="terms"><h2>Terms &amp; conditions</h2><p>This preview website is for testing only. Product descriptions, prices, availability, seller details and licence information may be incomplete or illustrative. No commercial order should be placed until the final details are published. Orders, where enabled, are subject to stock confirmation, final delivery charges and written confirmation by MistBean. Customers must verify the payee name and amount in their UPI app before authorising a payment. Payment is treated as received only after MistBean verifies the credit in its bank account.</p></div>
+ <div class="footer-legal" id="privacy"><h2>Privacy notice</h2><p>Details entered at checkout, such as name, mobile number and delivery address, are submitted securely to MistBean to process and fulfil an order. They are not displayed in the public product catalogue. Order details are accessible to authorised administrators for order handling. Do not submit payment PINs, OTPs, passwords or banking credentials. Contact MistBean through the support channel if you need help with your information.</p></div>
+ <div class="footer-legal" id="shipping"><h2>Shipping, cancellations &amp; returns</h2><p>Dispatch timelines, delivery charges and serviceability will be confirmed before payment. If an order cannot be fulfilled, MistBean will contact the customer to discuss cancellation and any applicable refund. For damaged, incorrect or missing items, contact MistBean with the order reference and supporting details as soon as reasonably possible. The final commercial policy will be published before launch.</p></div>
+ <div class="footer-bottom">© <span id="year"></span> MistBean Coffee. All rights reserved. <span>Preview store · Not open for commercial orders</span></div>
 </div></footer>
 </section>
 
@@ -133,7 +139,7 @@
 </div>
 </form>
 </div>
-<footer><div class="wrap">© <span id="year2"></span> MistBean Coffee · Thank you for choosing us.</div></footer>
+<footer class="order-footer"><div class="wrap">© <span id="year2"></span> MistBean Coffee · Customer support: WhatsApp · Preview store only.</div></footer>
 </section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
