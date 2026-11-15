@@ -251,7 +251,7 @@ async function verifyAccess(request, env) {
 
   try {
     if (!accessJwks || accessJwksIssuer !== issuer) {
-      accessJwks = createRemoteJWKSet(new URL(\`\${issuer}/cdn-cgi/access/certs\`));
+      accessJwks = createRemoteJWKSet(new URL(issuer + '/cdn-cgi/access/certs'));
       accessJwksIssuer = issuer;
     }
 
