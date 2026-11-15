@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { buildUpiLink, formatPaise } from './payment-domain.js';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { verifyAccess } from './access-auth.js';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -236,60 +236,6 @@ async function createInvoice(env, order, actor) {
   await env.DB.prepare('UPDATE orders SET invoice_number=?,invoice_key=?,updated_at=? WHERE id=?').bind(invoiceNumber,key,now(),order.id).run();
   await audit(env,'INVOICE_GENERATED',order.id,actor,{invoiceNumber});
   return { invoiceNumber, key };
-}
-
-let accessJwks = null;
-let accessJwksIssuer = '';
-
-async function verifyAccess(request, env) {
-  const issuer = String(env.ACCESS_TEAM_DOMAIN || '').replace(/\/+$/, '');
-  const audience = String(env.ACCESS_AUD || '').trim();
-  const allowedEmail = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
-  const token = request.headers.get('Cf-Access-Jwt-Assertion');
-
-  // Temporary diagnostics: never log the assertion, cookies, or email address.
-  if (!issuer || !audience || !allowedEmail) {
-    console.warn('ACCESS_DIAG: configuration missing', {
-      issuerConfigured: Boolean(issuer),
-      audienceConfigured: Boolean(audience),
-      adminEmailConfigured: Boolean(allowedEmail)
-    });
-    return null;
-  }
-  if (!token) {
-    console.warn('ACCESS_DIAG: Cf-Access-Jwt-Assertion header missing');
-    return null;
-  }
-
-  try {
-    if (!accessJwks || accessJwksIssuer !== issuer) {
-      accessJwks = createRemoteJWKSet(new URL(issuer + '/cdn-cgi/access/certs'));
-      accessJwksIssuer = issuer;
-    }
-
-    const { payload } = await jwtVerify(token, accessJwks, {
-      issuer,
-      audience
-    });
-
-    const email = String(payload.email || '').trim().toLowerCase();
-    if (!email || email !== allowedEmail) {
-      console.warn('ACCESS_DIAG: JWT valid but admin email did not match', {
-        emailClaimPresent: Boolean(email),
-        emailMatchesConfiguredAdmin: email === allowedEmail
-      });
-      return null;
-    }
-
-    console.log('ACCESS_DIAG: Access JWT verified successfully');
-    return { email };
-  } catch (error) {
-    console.warn('ACCESS_DIAG: JWT verification failed', {
-      errorName: error?.name || 'UnknownError',
-      errorCode: error?.code || 'unavailable'
-    });
-    return null;
-  }
 }
 
 async function api(request, env, adminIdentity = null) {
