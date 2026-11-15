@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
 import { buildUpiLink, formatPaise } from './payment-domain.js';
-import { verifyPassword } from './password.js';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -238,7 +238,38 @@ async function createInvoice(env, order, actor) {
   return { invoiceNumber, key };
 }
 
-async function api(request, env) {
+let accessJwks = null;
+let accessJwksIssuer = '';
+
+async function verifyAccess(request, env) {
+  const issuer = String(env.ACCESS_TEAM_DOMAIN || '').replace(/\/+$/, '');
+  const audience = String(env.ACCESS_AUD || '').trim();
+  const allowedEmail = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const token = request.headers.get('Cf-Access-Jwt-Assertion');
+
+  if (!issuer || !audience || !allowedEmail || !token) return null;
+
+  try {
+    if (!accessJwks || accessJwksIssuer !== issuer) {
+      accessJwks = createRemoteJWKSet(new URL(\`\${issuer}/cdn-cgi/access/certs\`));
+      accessJwksIssuer = issuer;
+    }
+
+    const { payload } = await jwtVerify(token, accessJwks, {
+      issuer,
+      audience
+    });
+
+    const email = String(payload.email || '').trim().toLowerCase();
+    if (!email || email !== allowedEmail) return null;
+
+    return { email };
+  } catch {
+    return null;
+  }
+}
+
+async function api(request, env, adminIdentity = null) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
   const qrMatch = path.match(/^\/qr\/([A-Za-z0-9_-]{40,50})\.svg$/);
   if (qrMatch && method === 'GET') {
@@ -359,20 +390,8 @@ async function api(request, env) {
       const origin=request.headers.get('origin');
       if(origin && origin!==url.origin) return fail('Cross-origin request blocked.',403);
     }
-    if(path==='/api/admin/login' && method==='POST') {
-      const ipHash=await sha256(request.headers.get('cf-connecting-ip')||'unknown');
-      await env.DB.prepare("DELETE FROM admin_login_attempts WHERE julianday(created_at) < julianday('now','-1 day')").run();
-      const attempts=await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_login_attempts WHERE ip_hash=? AND julianday(created_at) > julianday('now','-15 minutes')").bind(ipHash).first();
-      if((attempts?.n||0)>=5) return fail('Too many login attempts. Try again in 15 minutes.',429);
-      await env.DB.prepare('INSERT INTO admin_login_attempts(ip_hash) VALUES(?)').bind(ipHash).run();
-      let body;try{body=await request.json();}catch{return fail('Invalid JSON.');}
-      if(clean(body.email,150).toLowerCase()!==String(env.ADMIN_EMAIL||'').toLowerCase() || !await verifyPassword(String(body.password||''),env.ADMIN_PASSWORD_HASH)) return fail('Invalid email or password.',401);
-      if(!env.SESSION_SECRET || env.SESSION_SECRET.length<32) return fail('Admin session secret is not configured securely.',503);
-      await env.DB.prepare('DELETE FROM admin_login_attempts WHERE ip_hash=?').bind(ipHash).run();
-      const token=await createSession(env,env.ADMIN_EMAIL);
-      return json({ok:true,expiresIn:28800},200,{'set-cookie':sessionCookie(token,28800,url.protocol==='https:')});
-    }
-    const actor=await adminFromRequest(request,env); if(!actor) return fail('Authentication required.',401);
+    const actor = adminIdentity?.email;
+    if (!actor) return fail('Authentication required.',401);
     if(path==='/api/admin/logout' && method==='POST') {
       const token=sessionToken(request);
       if(token) await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await sha256(token)).run();
@@ -569,8 +588,22 @@ async function api(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url=new URL(request.url);
+    const isAdminApi = url.pathname.startsWith('/api/admin/');
+    const isAdminPage = url.pathname === '/admin' || url.pathname.startsWith('/admin/');
+    let adminIdentity = null;
+
+    if (isAdminApi || isAdminPage) {
+      adminIdentity = await verifyAccess(request, env);
+      if (!adminIdentity) {
+        return new Response('Authentication required.', {
+          status: 401,
+          headers: { ...SECURITY_HEADERS, 'cache-control': 'no-store' }
+        });
+      }
+    }
+
     if(url.pathname.startsWith('/api/') || url.pathname.startsWith('/pay/') || url.pathname.startsWith('/qr/')) {
-      try { return await api(request,env); }
+      try { return await api(request,env,adminIdentity); }
       catch(error){ console.error('API error',error); return fail('An unexpected server error occurred.',500); }
     }
     const assetResponse=await env.ASSETS.fetch(request);
