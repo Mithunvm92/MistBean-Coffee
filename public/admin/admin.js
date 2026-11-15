@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);let currentFilter='ALL';let allOrders=[];
-async function api(path,options={}){const r=await fetch(path,{...options,credentials:'same-origin',headers:{'content-type':'application/json',...(options.headers||{})}});const data=r.headers.get('content-type')?.includes('application/json')?await r.json():r;if(!r.ok)throw new Error(data.error||\`Request failed (\${r.status})\`);return data;}
+async function api(path,options={}){const r=await fetch(path,{...options,credentials:'same-origin',headers:{'content-type':'application/json',...(options.headers||{})}});const data=r.headers.get('content-type')?.includes('application/json')?await r.json():r;if(!r.ok)throw new Error(data.error||`Request failed (\${r.status})`);return data;}
 $('logout').addEventListener('click',()=>{window.location.assign('/cdn-cgi/access/logout');});
 $('refresh').addEventListener('click',loadOrders);$('refreshStock').addEventListener('click',loadProducts);
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{currentFilter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b));renderOrders();}));
