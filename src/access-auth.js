@@ -1,7 +1,7 @@
 import {
   customFetch,
   createRemoteJWKSet,
-  decodeJWT,
+  decodeJwt,
   decodeProtectedHeader,
   jwtVerify
 } from 'jose';
@@ -32,7 +32,7 @@ function safeHeader(token) {
 
 function safeClaimDiagnostics(token, issuer, audience) {
   try {
-    const payload = decodeJWT(token);
+    const payload = decodeJwt(token);
     return {
       issuerMatches: payload.iss === issuer,
       audienceMatches: audienceMatches(payload.aud, audience)
