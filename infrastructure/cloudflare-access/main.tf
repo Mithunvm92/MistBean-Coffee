@@ -13,6 +13,14 @@ resource "cloudflare_zero_trust_access_application" "admin_staging" {
     {
       type = "public"
       uri  = "*.admin-staging.mistbeancoffee.in/admin/*"
+    },
+    {
+      type = "public"
+      uri  = "admin-staging.mistbeancoffee.in/api/admin/*"
+    },
+    {
+      type = "public"
+      uri  = "admin-staging.mistbeancoffee.in/admin/*"
     }
   ]
 
