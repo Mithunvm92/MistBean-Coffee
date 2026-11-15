@@ -90,7 +90,7 @@ function createResolver(issuer, fetcher) {
     {
       [customFetch]: guardedFetch,
       cacheMaxAge: JWKS_CACHE_MAX_AGE_MS,
-      cooldownDuration: 0,
+      cooldownDuration: 30_000,
       timeoutDuration: 5000
     }
   );
