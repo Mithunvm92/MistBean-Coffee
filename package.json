@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "qrcode": "^1.5.4",
-    "@noble/hashes": "^2.4.0"
+    "@noble/hashes": "^2.4.0",
+    "jose": "^6.2.17"
   }
 }
