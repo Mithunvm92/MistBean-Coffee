@@ -17,7 +17,11 @@ if(o.status==='CONFIRMED'&&o.payment_status==='PAID'&&o.invoice_number)add('Mark
 if(o.status==='DISPATCHED')add('Mark delivered','',()=>action(o,'deliver'));
 root.append(card);}}
 async function action(o,actionName,body={}){try{await api(`/api/admin/orders/${o.id}/${actionName}`,{method:'POST',body:JSON.stringify(body)});await loadOrders();}catch(e){$('appError').textContent=e.message;}}
-async function generateInvoiceAndSend(o){const popup=window.open('about:blank','_blank');try{const d=await api(`/api/admin/orders/${o.id}/invoice`,{method:'POST',body:'{}'});if(d.message){await navigator.clipboard.writeText(d.message);}if(d.whatsappUrl){if(popup)popup.location=d.whatsappUrl;else window.location.href=d.whatsappUrl;alert('Invoice generated. Message copied. In WhatsApp, attach the downloaded invoice PDF and press Send yourself.');}else{if(popup)popup.close();alert('Invoice generated.');}await loadOrders();}catch(e){if(popup)popup.close();$('appError').textContent=e.message;}}
+async function fetchInvoiceFile(o){const r=await fetch('/api/admin/invoices/'+encodeURIComponent(o.id),{credentials:'same-origin'});if(!r.ok){let message='Could not load the invoice PDF.';try{const d=await r.json();message=d.error||message;}catch{}throw new Error(message);}return await r.blob();}
+function invoiceFileName(o){return 'MistBean-'+String(o.invoice_number||'invoice').replaceAll('/','-')+'.pdf';}
+function downloadInvoiceBlob(blob,o){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=invoiceFileName(o);document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000);}
+async function shareInvoiceFile(o,blob,message,popup){const file=new File([blob],invoiceFileName(o),{type:'application/pdf'});if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){if(popup)popup.close();try{await navigator.share({files:[file],title:'MistBean invoice '+(o.invoice_number||''),text:message||'MistBean Coffee invoice for order '+o.order_ref});alert('Choose WhatsApp in the share sheet, review the attached invoice and message, then press Send.');return true;}catch(e){if(e.name==='AbortError')return true;console.warn('Invoice sharing unavailable:',e);} }downloadInvoiceBlob(blob,o);if(popup&&o.customer_phone){popup.location='https://wa.me/91'+String(o.customer_phone).replace(/\D/g,'')+'?text='+encodeURIComponent(message||'Please find your MistBean Coffee invoice for order '+o.order_ref+'.');}else if(popup)popup.close();alert('Invoice PDF downloaded. WhatsApp is open; attach the downloaded PDF, review the message, and press Send yourself.');return false;}
+async function generateInvoiceAndSend(o){const popup=window.open('about:blank','_blank');try{const d=await api('/api/admin/orders/'+o.id+'/invoice',{method:'POST',body:'{}'});const invoiceOrder=d.order||{...o,invoice_number:d.invoiceNumber};const blob=await fetchInvoiceFile(invoiceOrder);await shareInvoiceFile(invoiceOrder,blob,d.message,popup);await loadOrders();}catch(e){if(popup)popup.close();$('appError').textContent=e.message;}}
 function canvasRoundRect(ctx,x,y,w,h,r,fill){ctx.beginPath();ctx.roundRect(x,y,w,h,r);if(fill){ctx.fillStyle=fill;ctx.fill();}}
 function canvasText(ctx,text,x,y,size,color,weight='400',align='left'){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(String(text??''),x,y);}
 function canvasWrap(ctx,text,x,y,maxWidth,lineHeight,size,color,weight='400',maxLines=2){ctx.font=`${weight} ${size}px Arial, sans-serif`;ctx.fillStyle=color;ctx.textAlign='left';const words=String(text??'').split(/\s+/);let line='',lines=[];for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxWidth&&line){lines.push(line);line=word;}else line=test;}if(line)lines.push(line);lines.slice(0,maxLines).forEach((value,i)=>ctx.fillText(value,x,y+i*lineHeight));return Math.min(lines.length,maxLines);}
@@ -72,18 +76,22 @@ async function sharePaymentCard(o){const blob=paymentCards.get(o.id);if(!blob){a
 async function openWhatsAppAction(o,actionName){
   if(actionName==='payment-request'){
     const payable=Number(o.payable_paise||Math.round(Number(o.total_amount)*100))/100;
-    const preview=`PAYMENT REQUEST PREVIEW\n\nOrder: ${o.order_ref}\nCustomer: ${o.customer_name}\nProduct: ${o.product_name} · ${o.pack_grams}g × ${o.quantity}\n\nProduct subtotal: ${money(o.subtotal)}\nDelivery fee: ${money(o.delivery_charge)}\nFinal UPI amount: ${money(payable)}\n\nGenerate the branded payment card and open WhatsApp?`;
+    const preview='PAYMENT REQUEST PREVIEW\n\nOrder: '+o.order_ref+'\nCustomer: '+o.customer_name+'\nProduct: '+o.product_name+' · '+o.pack_grams+'g × '+o.quantity+'\n\nProduct subtotal: '+money(o.subtotal)+'\nDelivery fee: '+money(o.delivery_charge)+'\nFinal UPI amount: '+money(payable)+'\n\nGenerate the branded payment card and open WhatsApp?';
     if(!confirm(preview))return;
   }
   const popup=window.open('about:blank','_blank');
   try{
-    const d=await api(`/api/admin/orders/${o.id}/${actionName}`,{method:'POST',body:'{}'});
+    const d=await api('/api/admin/orders/'+o.id+'/'+actionName,{method:'POST',body:'{}'});
+    if(actionName==='invoice-send'){
+      const blob=await fetchInvoiceFile(o);
+      await shareInvoiceFile(o,blob,d.message,popup);
+      return;
+    }
     if(d.message){try{await navigator.clipboard.writeText(d.message);}catch{console.info('Clipboard unavailable; WhatsApp draft contains the prepared message.');}}
     if(actionName==='payment-request'&&d.qrUrl){const cardBlob=await downloadPaymentCardPng({...o,payable_paise:Math.round(Number(d.totalAmount)*100)},d.qrUrl);paymentCards.set(o.id,cardBlob);}
     if(d.whatsappUrl){if(popup)popup.location=d.whatsappUrl;else window.location.href=d.whatsappUrl;}else if(popup)popup.close();
     await loadOrders();
     if(actionName==='payment-request')alert('Your MistBean payment card PNG has been downloaded and the customer WhatsApp chat is open. Attach the PNG, review the message, and press Send.');
-    else if(actionName==='invoice-send')alert('Invoice message prepared. Attach the PDF and press Send yourself.');
   }catch(e){if(popup)popup.close();$('appError').textContent=e.message;}
 }
 async function confirmOrder(o){const raw=prompt('Delivery charge in INR (default ₹1; enter 0 if free):','1');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<0||amount>100000){alert('Enter a valid delivery charge.');return;}await action(o,'confirm',{deliveryCharge:amount});}
