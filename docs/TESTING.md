@@ -8,12 +8,16 @@
 6. Confirm the response shows an order reference and that no WhatsApp message is sent in mock mode.
 7. Open `/admin/`, sign in and confirm the order appears.
 8. Confirm the order with a test delivery charge. Verify the total equals subtotal plus delivery.
-9. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
-10. Mark dispatched and delivered.
-11. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
-12. Try the admin API without a token; it should return 401.
-13. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
-14. Confirm `/api/health` returns `ok: true`.
+9. Click **Send UPI payment link on WhatsApp** in mock mode. Check that the prefilled message contains an HTTPS localhost `/pay/{43-character-random-token}` link and the confirmed amount. The URL must not contain the internal order ID or public order reference as its security token.
+10. Open the payment link. A confirmed unpaid order should render the branded payment page with a server-generated `upi://pay` deep link and a local `/qr/{token}.png` QR image. The page must use the same server-computed amount for both. Check that unknown tokens return 404; pending orders show awaiting confirmation without a payment action; payment-submitted orders show awaiting verification; paid orders show payment received; dispatched/delivered orders show fulfilment status; rejected/cancelled orders cannot be paid.
+11. Submit a test UTR from the payment page. Confirm the request uses the opaque payment token (not an order ID or public order reference), stores the UTR and server-calculated amount, and changes `payment_status` to `PAYMENT_SUBMITTED`. Confirm a second submission is rejected and the payment page no longer offers another payment action.
+12. Verify the payment page, QR and UTR submission endpoints return `Cache-Control: no-store`, payment-page responses use `Referrer-Policy: no-referrer`, and each endpoint enforces application-level rate limits. Missing UPI configuration must return a clear 503 payment-unavailable response without breaking storefront or admin routes.
+13. Mark payment as verified only in a test database. Generate and download a sample PDF invoice. Check seller identity and legal fields before any real invoice use.
+14. Mark dispatched and delivered.
+15. Submit six orders rapidly from the same local source IP; the application-level limit should reject excess attempts.
+16. Try the admin API without a session; it should return 401.
+17. Try invalid product/pack/quantity/phone/PIN values; the API should reject them.
+18. Confirm `/api/health` returns `ok: true`.
 
 ## Not covered by automated tests yet
 
@@ -23,3 +27,23 @@ Meta webhook signature integration tests, approved template sends, invoice docum
 
 Apply migration locally only: `npx wrangler d1 migrations apply mistbean-db --local`.
 It updates catalogue prices for future orders to ₹1–₹9 and creates the admin login throttle table. Existing orders remain unchanged. Sign in again after updating code, regenerate the admin password hash and SESSION_SECRET in `.dev.vars`.
+
+## Phone-linked customer accounts and post-payment invoice workflow
+
+1. Apply all migrations locally, including `0005_phone_customer_accounts_and_payment_ledger.sql`:
+   ```bash
+   npx wrangler d1 migrations apply mistbean-db --local
+   ```
+2. Submit two test orders using the same valid Indian mobile number and different order details.
+3. In the admin order list, confirm both orders display the same `MB-C-...` customer account reference. The reference must not contain the phone number.
+4. Confirm one order, set a test delivery charge, and prepare its UPI payment request.
+5. Verify the test payment only after checking the test bank/payment simulation. Enter a test UTR.
+6. Confirm the order becomes PAID and a row is created in `customer_payments` for the customer account, order, exact total amount, UPI reference, verifier and verification timestamp.
+7. If seller identity/address and R2 are configured, confirm the invoice is generated automatically, stored in private R2, and linked to the same order/customer account. The PDF should show invoice number, order, paid amount, UPI reference and verification time.
+8. If invoice generation cannot complete because seller details or R2 are missing, payment must remain PAID, an `INVOICE_AUTO_GENERATION_FAILED` audit event should be recorded, and the admin should be able to retry **Generate invoice** after fixing configuration.
+9. Confirm a second verification attempt cannot create a duplicate payment ledger row or invoice number.
+10. Confirm invoice download remains admin-authenticated and returns `Cache-Control: no-store`.
+11. Confirm a customer phone number change creates/links a different phone account for future orders; historical orders remain attached to their original account.
+12. Do not use real customer data or real money in local testing.
+
+Phone-based association is an internal customer record, not an authenticated customer portal. Do not expose invoices or order history publicly based only on a phone number. A future customer self-service portal must verify phone ownership with OTP before showing private records.

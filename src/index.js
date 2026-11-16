@@ -1,6 +1,12 @@
+import QRCode from 'qrcode';
+import { buildUpiLink, formatPaise } from './payment-domain.js';
+import { verifyAccess } from './access-auth.js';
 const SECURITY_HEADERS = {
   'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'referrer-policy': 'strict-origin-when-cross-origin',
+  'cross-origin-resource-policy': 'same-origin',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 };
@@ -24,14 +30,6 @@ async function hmac(value, secret) {
   const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   return b64(await crypto.subtle.sign('HMAC', key, enc.encode(value)));
 }
-async function verifyPassword(password, stored) {
-  const [kind, rounds, salt, expected] = String(stored || '').split('$');
-  if (kind !== 'pbkdf2' || !rounds || !salt || !expected) return false;
-  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: Uint8Array.from(salt.match(/../g).map(x => parseInt(x, 16))), iterations: Number(rounds), hash: 'SHA-256' }, key, 256);
-  const actual = [...new Uint8Array(bits)].map(x => x.toString(16).padStart(2, '0')).join('');
-  return actual.length === expected.length && [...actual].reduce((n, c, i) => n | (c.charCodeAt(0) ^ expected.charCodeAt(i)), 0) === 0;
-}
 async function createSession(env, email) {
   const payload = b64(enc.encode(JSON.stringify({ sub: email, exp: Date.now() + 8 * 60 * 60 * 1000, nonce: uuid() })));
   const token = `${payload}.${await hmac(payload, env.SESSION_SECRET)}`;
@@ -44,8 +42,8 @@ function sessionToken(request) {
   const entry = cookie.split(';').map(v => v.trim()).find(v => v.startsWith('mb_admin_session='));
   return entry ? decodeURIComponent(entry.slice('mb_admin_session='.length)) : '';
 }
-function sessionCookie(token, maxAge=28800) {
-  return `mb_admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+function sessionCookie(token, maxAge=28800, secure=true) {
+  return `mb_admin_session=${encodeURIComponent(token)}; Path=/; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Strict; Max-Age=${maxAge}`;
 }
 async function adminFromRequest(request, env) {
   const token = sessionToken(request);
@@ -60,6 +58,7 @@ async function adminFromRequest(request, env) {
 }
 async function audit(env, action, orderId, actor, details = {}) {
   await env.DB.prepare('INSERT INTO audit_log(id,action,order_id,actor,details_json) VALUES(?,?,?,?,?)').bind(uuid(), action, orderId || null, actor, JSON.stringify(details)).run();
+  if (orderId) await env.DB.prepare('INSERT INTO events(id,order_id,type,detail) VALUES(?,?,?,?)').bind(uuid(), orderId, action, JSON.stringify({ actor, ...details })).run();
 }
 function orderRef() { return `MB-${new Date().toISOString().slice(2,10).replaceAll('-', '')}-${crypto.randomUUID().slice(0,6).toUpperCase()}`; }
 function validPhone(phone) { return /^[6-9]\d{9}$/.test(phone); }
@@ -68,116 +67,163 @@ function whatsappChatUrl(phone, message) {
   const digits = String(phone || '').replace(/\D/g, '');
   return `https://wa.me/91${digits}?text=${encodeURIComponent(message)}`;
 }
+function publicBaseUrl(env, requestUrl) {
+  const configured = clean(env.PUBLIC_BASE_URL, 300);
+  const base = new URL(configured || requestUrl.origin);
+  const local = ['localhost', '127.0.0.1'].includes(base.hostname);
+  if (base.protocol !== 'https:' && !local) throw new Error('PUBLIC_BASE_URL must use HTTPS.');
+  if (base.pathname !== '/' || base.search || base.hash || base.username || base.password) throw new Error('PUBLIC_BASE_URL must be an origin only, for example https://mistbeancoffee.in.');
+  if (!configured && !local) throw new Error('Set PUBLIC_BASE_URL to the public HTTPS storefront URL before sending payment links.');
+  return base.origin;
+}
+function makePaymentUrl(env, requestUrl, token) {
+  return `${publicBaseUrl(env, requestUrl)}/pay/${encodeURIComponent(token)}`;
+}
 function makeUpiUri(env, order) {
   const upiId = clean(env.UPI_ID, 120);
-  if (!upiId || !upiId.includes('@')) throw new Error('Set a valid UPI_ID in local .dev.vars before preparing payment details.');
-  const params = new URLSearchParams({
-    pa: upiId,
-    pn: clean(env.UPI_PAYEE_NAME || 'MistBean Coffee', 80),
-    am: (Number(order.total_amount) / 1).toFixed(2),
-    cu: 'INR',
-    tn: `MistBean ${order.order_ref}`
-  });
-  return `upi://pay?${params.toString()}`;
+  const storeName = clean(env.STORE_NAME, 80);
+  if (!upiId || !upiId.includes('@')) throw new Error('Set a valid UPI_ID before preparing payment details.');
+  if (!storeName) throw new Error('Set STORE_NAME before preparing payment details.');
+  if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) throw new Error('The confirmed payable amount is missing.');
+  return buildUpiLink({ upiId, storeName, amountPaise:order.payable_paise, orderId:order.order_ref });
+}
+function createPaymentToken() {
+  return b64(crypto.getRandomValues(new Uint8Array(32)));
+}
+async function paymentTokenKey(env) {
+  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) throw new Error('Set a secure SESSION_SECRET before creating payment links.');
+  const raw = await crypto.subtle.digest('SHA-256',enc.encode(env.SESSION_SECRET));
+  return crypto.subtle.importKey('raw',raw,{name:'AES-GCM'},false,['encrypt','decrypt']);
+}
+async function encryptPaymentToken(token,env) {
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},await paymentTokenKey(env),enc.encode(token));
+  const combined=new Uint8Array(iv.length+encrypted.byteLength);
+  combined.set(iv);combined.set(new Uint8Array(encrypted),iv.length);
+  return b64(combined);
+}
+async function decryptPaymentToken(value,env) {
+  const combined=unb64(value);
+  const iv=combined.slice(0,12),ciphertext=combined.slice(12);
+  const decrypted=await crypto.subtle.decrypt({name:'AES-GCM',iv},await paymentTokenKey(env),ciphertext);
+  return dec.decode(decrypted);
+}
+async function allowPaymentPageRequest(request, env, route) {
+  const ipHash = await sha256(request.headers.get('cf-connecting-ip') || 'unknown');
+  await env.DB.prepare("DELETE FROM payment_page_rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM payment_page_rate_limits WHERE ip_hash=? AND route=? AND julianday(created_at)>julianday('now','-1 minute')").bind(ipHash,route).first();
+  const limit = route === 'qr' ? 60 : 30;
+  if ((count?.n || 0) >= limit) return false;
+  await env.DB.prepare('INSERT INTO payment_page_rate_limits(ip_hash,route) VALUES(?,?)').bind(ipHash,route).run();
+  return true;
+}
+async function allowPaymentSubmissionRequest(request, env) {
+  const ipHash = await sha256(request.headers.get('cf-connecting-ip') || 'unknown');
+  await env.DB.prepare("DELETE FROM payment_submission_rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM payment_submission_rate_limits WHERE ip_hash=? AND julianday(created_at)>julianday('now','-1 minute')").bind(ipHash).first();
+  if ((count?.n || 0) >= 5) return false;
+  await env.DB.prepare('INSERT INTO payment_submission_rate_limits(ip_hash) VALUES(?)').bind(ipHash).run();
+  return true;
+}
+async function paymentOrderByToken(env, token) {
+  if (!/^[A-Za-z0-9_-]{40,50}$/.test(token)) return null;
+  return env.DB.prepare('SELECT id,order_ref,product_name,pack_grams,quantity,total_amount,payable_paise,status,payment_status,payment_submitted_at FROM orders WHERE pay_token_hash=?').bind(await sha256(token)).first();
 }
 
 async function getProducts(env) {
-  const rows = await env.DB.prepare('SELECT id,name,description,active,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
-  return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
+  const rows = await env.DB.prepare('SELECT id,name,description,active,in_stock,price_250,price_500,price_1000 FROM products WHERE active=1 ORDER BY id').all();
+  return (rows.results || []).map(p => ({ id:p.id, name:p.name, description:p.description, inStock:Boolean(p.in_stock), prices:{250:p.price_250,500:p.price_500,1000:p.price_1000} }));
 }
-async function sendTemplate(env, to, templateName, params) {
-  if (env.WHATSAPP_MODE !== 'meta') return { skipped: true, reason: 'WhatsApp mock mode' };
-  if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID || !templateName) throw new Error('WhatsApp Cloud API is not configured.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ messaging_product:'whatsapp', to, type:'template', template:{ name:templateName, language:{code:'en'}, components:[{type:'body',parameters:params.map(text => ({type:'text',text:String(text)}))}] } })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `WhatsApp API error ${response.status}`);
-  return data;
-}
-
 function whatsappRecipient(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (/^[6-9]\d{9}$/.test(digits)) return `91${digits}`;
   if (/^91[6-9]\d{9}$/.test(digits)) return digits;
   throw new Error('Customer phone number is not a valid Indian WhatsApp number.');
 }
-async function uploadWhatsAppImage(env, imageBytes, filename) {
-  if (!env.WHATSAPP_ACCESS_TOKEN || !env.WHATSAPP_PHONE_NUMBER_ID) throw new Error('WhatsApp Cloud API is not configured.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const form = new FormData();
-  form.append('messaging_product', 'whatsapp');
-  form.append('type', 'image/png');
-  form.append('file', new Blob([imageBytes], { type: 'image/png' }), filename);
-  const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/media`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}` }, body: form
-  });
-  const data = await response.json();
-  if (!response.ok || !data.id) throw new Error(data?.error?.message || `WhatsApp media upload failed (${response.status}).`);
-  return data.id;
-}
-async function sendPaymentQrTemplate(env, order, upiUri) {
-  if (env.WHATSAPP_MODE !== 'meta') throw new Error('WhatsApp Cloud API is not enabled.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=640x640&format=png&data=${encodeURIComponent(upiUri)}`;
-  const qrResponse = await fetch(qrUrl, { headers: { accept: 'image/png' } });
-  if (!qrResponse.ok) throw new Error('Could not generate the UPI QR image. Please retry.');
-  const imageId = await uploadWhatsAppImage(env, await qrResponse.arrayBuffer(), `mistbean-${order.order_ref}-upi-qr.png`);
-  const templateName = env.WHATSAPP_TEMPLATE_PAYMENT || 'mistbean_payment_request';
-  const bodyParams = [order.customer_name, order.order_ref, `INR ${order.total_amount}`, clean(env.UPI_ID, 120), upiUri];
-  const response = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: 'POST', headers: { authorization: `Bearer ${env.WHATSAPP_ACCESS_TOKEN}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp', to: whatsappRecipient(order.customer_phone), type: 'template',
-      template: { name: templateName, language: { code: 'en' }, components: [
-        { type: 'header', parameters: [{ type: 'image', image: { id: imageId } }] },
-        { type: 'body', parameters: bodyParams.map(text => ({ type: 'text', text: String(text) })) }
-      ] }
-    })
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `WhatsApp send failed (${response.status}).`);
-  return data;
-}
-async function notifyCustomer(env, order, templateName, params) {
-  if (!order.customer_whatsapp_opt_in) return;
-  try { await sendTemplate(env, order.customer_phone, templateName, params); }
-  catch (error) { console.error('WhatsApp customer notification failed', error.message); }
-}
 
-function pdfEscape(s) { return String(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?'); }
+function pdfEscape(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,' '); }
 function makeInvoicePdf(order, env) {
-  const lines = [
-    env.SELLER_LEGAL_NAME || 'MistBean Coffee', env.SELLER_ADDRESS || 'Seller address to be updated',
-    `Invoice: ${order.invoice_number}`, `Order: ${order.order_ref}`, `Date: ${now().slice(0,10)}`,
-    `Bill to: ${order.customer_name}`, `Phone: ${order.customer_phone}`, `Address: ${order.delivery_address}, ${order.pin_code}`,
-    `Item: ${order.product_name} ${order.pack_grams}g x ${order.quantity}`,
-    `Unit price: INR ${order.unit_price}`, `Subtotal: INR ${order.subtotal}`, `Delivery: INR ${order.delivery_charge}`,
-    `Total: INR ${order.total_amount}`, `Payment status: ${order.payment_status}`,
-    ...(env.SELLER_GSTIN ? [`GSTIN: ${env.SELLER_GSTIN}`] : []),
-    ...(env.FSSAI_LICENSE_NUMBER ? [`FSSAI Licence/Registration: ${env.FSSAI_LICENSE_NUMBER}`] : []),
-  ];
-  const stream = `BT\n/F1 11 Tf\n50 790 Td\n${lines.map((line,i)=>`${i? '0 -24 Td\n':''}(${pdfEscape(line)}) Tj`).join('\n')}\nET`;
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-    `<< /Length ${enc.encode(stream).length} >>\nstream\n${stream}\nendstream`
-  ];
-  let pdf = '%PDF-1.4\n'; const offsets=[0];
-  objects.forEach((obj,i)=>{ offsets.push(enc.encode(pdf).length); pdf += `${i+1} 0 obj\n${obj}\nendobj\n`; });
-  const xref = enc.encode(pdf).length; pdf += `xref\n0 ${objects.length+1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach(o=>{pdf += `${String(o).padStart(10,'0')} 00000 n \n`;});
-  pdf += `trailer\n<< /Size ${objects.length+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return enc.encode(pdf);
+  const W=595,H=842,M=42;
+  const C={ink:'0.18 0.13 0.10',brown:'0.20 0.14 0.10',gold:'0.72 0.52 0.30',cream:'0.96 0.94 0.89',pale:'0.985 0.98 0.96',muted:'0.40 0.37 0.34',white:'1 1 1',green:'0.18 0.38 0.27'};
+  const ops=[], y=t=>H-t;
+  const rect=(x,t,w,h,c)=>ops.push(c+' rg '+x+' '+y(t+h)+' '+w+' '+h+' re f');
+  const line=(x1,t1,x2,t2,c=C.gold,w=0.6)=>ops.push(c+' RG '+w+' w '+x1+' '+y(t1)+' m '+x2+' '+y(t2)+' l S');
+  const text=(v,x,t,size=9,font='F1',c=C.ink)=>ops.push(c+' rg BT /'+font+' '+size+' Tf 1 0 0 1 '+x+' '+y(t)+' Tm ('+pdfEscape(v)+') Tj ET');
+  const wrap=(v,n)=>{const words=String(v||'').split(/\s+/),out=[];let row='';for(const word of words){if(!word)continue;const next=row?row+' '+word:word;if(next.length>n&&row){out.push(row);row=word;}else row=next;}if(row)out.push(row);return out;};
+  const block=(v,x,t,o={})=>{const rows=wrap(v,o.maxChars||60).slice(0,o.maxLines||4);rows.forEach((r,i)=>text(r,x,t+i*(o.leading||12),o.size||8.5,o.font||'F1',o.color||C.ink));return rows.length*(o.leading||12);};
+  const money=n=>'INR '+Number(n||0).toLocaleString('en-IN');
+  const sellerName=env.SELLER_LEGAL_NAME||'TEST ONLY - MistBean Proprietor';
+  const sellerAddress=env.SELLER_ADDRESS||'TEST ONLY - Business address pending';
+  const fssai=env.FSSAI_LICENSE_NUMBER||'TEST ONLY - FSSAI details pending';
+  const customerAddress=(order.delivery_address||'')+', '+(order.pin_code||'');
+  const notes=String(order.notes||'');
+  const roast=notes.match(/Roast preference:\s*([^;]+)/i)?.[1]?.trim()||'Not specified';
+  const grind=notes.match(/Grind size:\s*([^;]+)/i)?.[1]?.trim()||'Not specified';
+  const form=String(order.grind_preference||'Not specified');
+  const blend=order.blend_ratio?'Arabica / Robusta ratio '+order.blend_ratio:'Not applicable';
+  const invoiceDate=String(order.payment_verified_at||order.updated_at||now()).slice(0,10);
+  const paymentDate=order.payment_verified_at?String(order.payment_verified_at).replace('T',' ').slice(0,19)+' UTC':'Not recorded';
+  const status=String(order.payment_status||'UNPAID').toUpperCase();
+
+  rect(0,0,W,158,C.brown);rect(0,154,W,4,C.gold);
+  text('MISTBEAN',M,49,27,'F2',C.white);text('COFFEE  |  FROM THE COORG HILLS',M,70,8.5,'F2','0.88 0.76 0.56');
+  text('SALES INVOICE',370,47,19,'F2',C.white);text(order.invoice_number||'DRAFT',370,67,10,'F1',C.white);
+  text('COMMERCIAL INVOICE - UNREGISTERED SUPPLIER',370,84,6.5,'F2','0.88 0.76 0.56');
+  text(sellerName,M,111,10,'F2',C.white);block(sellerAddress,M,125,{size:7.5,maxChars:78,leading:10,color:C.white,maxLines:2});
+  text('FSSAI: '+fssai,M,148,7,'F1',C.white);
+
+  const top=184;
+  text('BILL TO / SHIP TO',M,top,8,'F2',C.gold);text(order.customer_name||'Customer',M,top+19,12,'F2',C.ink);
+  let h=block('Phone: '+(order.customer_phone||'Not recorded'),M,top+34,{size:8.5,maxChars:56,leading:12,maxLines:2});
+  block('Delivery address: '+customerAddress,M,top+34+h,{size:8.2,maxChars:57,leading:12,maxLines:4});
+  rect(365,top-14,188,91,C.cream);text('INVOICE DATE',379,top+4,7,'F2',C.muted);text(invoiceDate,379,top+21,10,'F2',C.ink);
+  text('ORDER REFERENCE',379,top+43,7,'F2',C.muted);text(order.order_ref||'-',379,top+60,9,'F2',C.ink);
+  text('ORDER DATE',379,top+78,7,'F2',C.muted);text(String(order.created_at||'').slice(0,10)||'-',449,top+78,7.5,'F2',C.ink);
+
+  const tableTop=302,x0=M,x1=345,x2=395,x3=465,x4=553;
+  rect(x0,tableTop,511,27,C.brown);text('DESCRIPTION / PRODUCT SPECIFICATIONS',x0+11,tableTop+17,7,'F2',C.white);
+  text('QTY',x1+8,tableTop+17,7,'F2',C.white);text('UNIT PRICE',x2+7,tableTop+17,7,'F2',C.white);text('AMOUNT',x3+12,tableTop+17,7,'F2',C.white);
+  const desc=[(order.product_name||'Coffee')+' - '+Number(order.pack_grams||0)+' g','Roast: '+roast+'  |  Form: '+form];
+  if(form.toLowerCase().includes('ground')||form.toLowerCase().includes('powder'))desc.push('Grind size: '+grind);
+  if(order.blend_ratio)desc.push('Blend ratio: '+blend);
+  desc.forEach((v,i)=>text(v,x0+11,tableTop+48+i*13,i===0?9:7.4,i===0?'F2':'F1',i===0?C.ink:C.muted));
+  text(String(order.quantity||1),x1+17,tableTop+49,8.5,'F1',C.ink);text(money(order.unit_price),x2+5,tableTop+49,8,'F1',C.ink);text(money(order.subtotal),x3+10,tableTop+49,8,'F2',C.ink);
+  const rowBottom=tableTop+62+Math.max(0,desc.length-1)*13;line(x0,rowBottom,x4,rowBottom,'0.84 0.80 0.73',0.7);
+
+  const sumTop=rowBottom+31,sx=370,vx=493;
+  text('PRICE SUMMARY',M,sumTop,8,'F2',C.gold);text('Product subtotal',sx,sumTop,8.5,'F1',C.muted);text(money(order.subtotal),vx,sumTop,8.5,'F1',C.ink);
+  text('Discount',sx,sumTop+19,8.5,'F1',C.muted);text(money(order.discount_amount||0),vx,sumTop+19,8.5,'F1',C.ink);
+  text('Delivery charges',sx,sumTop+38,8.5,'F1',C.muted);text(money(order.delivery_charge),vx,sumTop+38,8.5,'F1',C.ink);
+  line(sx,sumTop+49,553,sumTop+49,'0.82 0.75 0.65',0.6);rect(354,sumTop+56,199,30,C.cream);
+  text('TOTAL AMOUNT',366,sumTop+75,8,'F2',C.brown);text(money(order.total_amount),466,sumTop+75,10,'F2',C.brown);
+  text('GST is not charged by this unregistered seller.',354,sumTop+101,7,'F1',C.muted);
+
+  const panelTop=sumTop+126;rect(M,panelTop,511,79,C.pale);text('PAYMENT DETAILS',M+13,panelTop+17,8,'F2',C.gold);
+  text('Status: '+status,M+13,panelTop+36,8.5,'F2',status==='PAID'?C.green:C.ink);text('Method: UPI',M+205,panelTop+36,8.5,'F1',C.ink);
+  text('Amount received: '+money(status==='PAID'?order.total_amount:0),M+13,panelTop+54,8,'F1',C.ink);
+  text('Verified: '+paymentDate,M+205,panelTop+54,7.5,'F1',C.ink);text('UTR / reference: '+(order.payment_reference||'Not recorded'),M+13,panelTop+70,7.5,'F1',C.muted);
+
+  const fulfilTop=panelTop+96;text('ORDER FULFILMENT',M,fulfilTop,8,'F2',C.gold);
+  text('Order status: '+(order.status||'PENDING'),M,fulfilTop+18,8,'F1',C.ink);text('Courier: '+(order.courier_name||'Not assigned'),M+190,fulfilTop+18,8,'F1',C.ink);
+  text('Tracking ID: '+(order.tracking_id||'Not assigned'),M,fulfilTop+35,8,'F1',C.ink);text('Delivery status: '+(order.status==='DELIVERED'?'Delivered':'See order updates'),M+190,fulfilTop+35,8,'F1',C.ink);
+
+  const footTop=H-66;line(M,footTop-12,553,footTop-12,C.gold,0.8);
+  text('Thank you for choosing MistBean Coffee.',M,footTop+5,9,'F2',C.brown);
+  text('For order support, contact MistBean using the details shared at checkout.',M,footTop+20,7.2,'F1',C.muted);
+  text('TEST DOCUMENT - Seller details and FSSAI data are placeholders pending verification.',M,footTop+36,6.5,'F2','0.55 0.30 0.18');
+  text('This is a commercial sales invoice, not a GST tax invoice.',M,footTop+49,6.5,'F1',C.muted);
+
+  const stream='q\n'+ops.join('\n')+'\nQ';
+  const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>','<< /Length '+enc.encode(stream).length+' >>\nstream\n'+stream+'\nendstream'];
+  let pdf='%PDF-1.4\n';const offsets=[0];objects.forEach((obj,i)=>{offsets.push(enc.encode(pdf).length);pdf+=(i+1)+' 0 obj\n'+obj+'\nendobj\n';});
+  const xref=enc.encode(pdf).length;pdf+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n';offsets.slice(1).forEach(o=>{pdf+=String(o).padStart(10,'0')+' 00000 n \n';});
+  pdf+='trailer\n<< /Size '+(objects.length+1)+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF';return enc.encode(pdf);
 }
 async function createInvoice(env, order, actor) {
   if (!env.SELLER_LEGAL_NAME || !env.SELLER_ADDRESS || String(env.SELLER_ADDRESS).toLowerCase().includes('update before launch')) throw new Error('Set the verified seller legal name and full address before generating invoices.');
   if (order.payment_status !== 'PAID') throw new Error('Verify payment before generating the invoice.');
   if (!env.INVOICES) throw new Error('Invoice storage (R2) is not configured.');
+  // Re-render an existing invoice with the latest PDF template without consuming a new invoice number.
   let invoiceNumber = order.invoice_number;
   if (!invoiceNumber) {
     const seq = await env.DB.prepare('UPDATE invoice_sequence SET next_number=next_number+1 WHERE id=1 RETURNING next_number-1 AS n').first();
@@ -191,25 +237,73 @@ async function createInvoice(env, order, actor) {
   await audit(env,'INVOICE_GENERATED',order.id,actor,{invoiceNumber});
   return { invoiceNumber, key };
 }
-async function sendInvoiceWhatsApp(env, order, key) {
-  if (env.WHATSAPP_MODE !== 'meta') return { skipped:true, reason:'WhatsApp mock mode' };
-  if (!order.customer_whatsapp_opt_in) throw new Error('Customer WhatsApp opt-in is missing.');
-  const obj = await env.INVOICES.get(key);
-  if (!obj) throw new Error('Invoice PDF not found.');
-  const version = env.WHATSAPP_GRAPH_VERSION || 'v25.0';
-  const form = new FormData();
-  form.append('messaging_product','whatsapp'); form.append('type','application/pdf');
-  form.append('file',new Blob([await obj.arrayBuffer()],{type:'application/pdf'}),`${order.invoice_number.replaceAll('/','-')}.pdf`);
-  const upload = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/media`,{method:'POST',headers:{authorization:`Bearer ${env.WHATSAPP_ACCESS_TOKEN}`},body:form});
-  const media = await upload.json(); if (!upload.ok) throw new Error(media?.error?.message || 'Invoice media upload failed');
-  const sent = await fetch(`https://graph.facebook.com/${version}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{authorization:`Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:order.customer_phone,type:'template',template:{name:env.WHATSAPP_TEMPLATE_INVOICE||'mistbean_invoice',language:{code:'en'},components:[{type:'header',parameters:[{type:'document',document:{id:media.id,filename:`${order.invoice_number.replaceAll('/','-')}.pdf`}}]},{type:'body',parameters:[{type:'text',text:order.invoice_number}]}]}})});
-  const data=await sent.json(); if(!sent.ok) throw new Error(data?.error?.message || 'Invoice message failed'); return data;
-}
 
-async function api(request, env) {
+async function api(request, env, adminIdentity = null) {
   const url = new URL(request.url); const path = url.pathname; const method = request.method;
+  const qrMatch = path.match(/^\/qr\/([A-Za-z0-9_-]{40,50})\.svg$/);
+  if (qrMatch && method === 'GET') {
+    if (!await allowPaymentPageRequest(request,env,'qr')) return fail('Too many payment page requests. Please try again shortly.',429);
+    const order = await paymentOrderByToken(env,qrMatch[1]);
+    if (!order || order.status !== 'CONFIRMED' || order.payment_status !== 'UNPAID' || !Number.isSafeInteger(order.payable_paise) || order.payable_paise<1) return fail('Payment QR not found or no longer payable.',404);
+    let upiUri;
+    try { upiUri = makeUpiUri(env,order); }
+    catch { return fail('Payment is temporarily unavailable. MistBean payment configuration is incomplete.',503); }
+    const svg = await QRCode.toString(upiUri,{type:'svg',width:320,margin:2,errorCorrectionLevel:'M'});
+    return new Response(svg,{status:200,headers:{...SECURITY_HEADERS,'content-type':'image/svg+xml; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff'}});
+  }
+  const payMatch = path.match(/^\/pay\/([A-Za-z0-9_-]{40,50})$/);
+  if (payMatch && method === 'GET') {
+    if (!await allowPaymentPageRequest(request,env,'pay')) return fail('Too many payment page requests. Please try again shortly.',429);
+    const token = payMatch[1];
+    const order = await paymentOrderByToken(env,token);
+    if (!order) return fail('Payment link not found.',404);
+    const esc=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const page=(title,message,status=200)=>new Response('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>'+esc(title)+' | MistBean Coffee</title></head><body style="font-family:Arial,sans-serif;background:#f5f0e7;color:#302016;padding:32px"><main style="max-width:520px;margin:auto;background:white;padding:28px;border-radius:16px"><h1>MISTBEAN COFFEE</h1><h2>'+esc(title)+'</h2><p>'+esc(message)+'</p><p>Order: '+esc(order.order_ref)+'</p></main></body></html>',{status,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
+    if (order.status === 'DELIVERED') return page('Order delivered','Your MistBean order has been marked delivered. Thank you for choosing MistBean Coffee.');
+    if (order.status === 'DISPATCHED') return page('Order dispatched','Your payment is verified and your order has been dispatched. Thank you for choosing MistBean Coffee.');
+    if (['REJECTED','CANCELLED'].includes(order.status)) return page('Payment link inactive','This order is no longer accepting payments. Please contact MistBean if you need help.');
+    if (order.payment_status === 'PAID') return page('Payment received','Your payment has been verified. Thank you for choosing MistBean Coffee.');
+    if (order.status !== 'CONFIRMED') return page('Order awaiting confirmation','MistBean has received your order. Payment instructions will be available after the order is confirmed.');
+    if (order.payment_status === 'PAYMENT_SUBMITTED') return page('Payment submitted','Your UTR has been submitted. MistBean will verify the bank credit. You do not need to pay again.');
+    if (order.payment_status !== 'UNPAID') return page('Payment status update','This order is not currently accepting payment. Please contact MistBean for assistance.');
+    if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return page('Payment not ready','The final payable amount is not available yet. Please contact MistBean.');
+    const amount = formatPaise(order.payable_paise);
+    let upiUri;
+    try { upiUri = makeUpiUri(env,order); }
+    catch { return page('Payment temporarily unavailable','MistBean payment configuration is incomplete. Please contact MistBean.',503); }
+    const qrUrl = '/qr/'+encodeURIComponent(token)+'.svg';
+    const storeName = clean(env.STORE_NAME,80);
+    const upiId = clean(env.UPI_ID,120);
+    const html='<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="theme-color" content="#302016"><title>Pay ₹'+amount+' | MistBean Coffee</title><style>*{box-sizing:border-box}body{margin:0;padding:24px 16px;background:#f4efe6;color:#302016;font-family:Arial,sans-serif}.card{max-width:540px;margin:24px auto;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 32px #30201618}.head{background:#302016;color:#fff;padding:24px 28px;border-bottom:5px solid #b8874d}.brand{font-size:25px;font-weight:800;letter-spacing:1px}.sub{color:#e2c69e;font-size:12px;margin-top:5px}.body{padding:26px}.muted{color:#74695f;font-size:13px}.amount{font-size:34px;font-weight:800;margin:8px 0 20px}.pay{display:block;text-align:center;background:#2d7046;color:#fff;text-decoration:none;padding:17px;border-radius:10px;font-weight:800;font-size:17px;margin:20px 0}.copy-row{display:flex;align-items:center;gap:10px;justify-content:space-between;background:#faf7f1;border:1px solid #eee5d9;border-radius:10px;padding:12px;margin-top:12px;word-break:break-all}.copy-row button{border:0;border-radius:7px;background:#302016;color:#fff;padding:9px 12px;font-weight:700;flex-shrink:0}.qr{text-align:center;background:#faf7f1;border:1px solid #eee5d9;border-radius:12px;padding:16px;margin-top:18px}.qr img{width:240px;height:240px;max-width:100%;image-rendering:pixelated}.hint{font-size:13px;line-height:1.5;color:#655b52}.item{padding:14px 0;border-bottom:1px solid #eee5d9;line-height:1.6}.foot{text-align:center;padding:0 24px 24px;color:#74695f;font-size:12px}@media(min-width:769px){.pay{display:none}}@media(max-width:600px){body{padding:8px}.card{margin:8px auto}.head{padding:20px}.body{padding:20px}.amount{font-size:32px}}</style></head><body><main class="card"><header class="head"><div class="brand">'+esc(storeName)+'</div><div class="sub">SECURE ORDER PAYMENT</div></header><section class="body"><div class="muted">PAYMENT FOR ORDER</div><h2 style="margin:6px 0">'+esc(order.order_ref)+'</h2><div class="muted">TOTAL PAYABLE</div><div class="amount">₹'+amount+'</div><a class="pay" href="'+esc(upiUri)+'" rel="noreferrer">Pay with UPI app</a><p class="hint">On your phone, tap the button to open a compatible UPI app with the amount pre-filled. Review the payee and exact amount before approving.</p><div class="copy-row"><span><strong>UPI ID</strong><br><span id="merchantUpi">'+esc(upiId)+'</span></span><button type="button" id="copyUpi">Copy UPI ID</button></div><div class="item"><strong>'+esc(order.product_name)+' · '+esc(order.pack_grams)+'g × '+esc(order.quantity)+'</strong><br><span class="muted">The amount includes the confirmed delivery charge.</span></div><div class="qr"><strong>Scan &amp; Pay with any UPI app</strong><p class="hint">Scan this QR using another phone. It contains the same UPI payment details and exact amount.</p><img src="'+qrUrl+'" alt="Order-specific UPI payment QR code" width="240" height="240"><p class="hint">Pay exactly ₹'+amount+'. After payment, enter your UPI UTR below. MistBean will verify the bank credit manually. Do not submit a payment screenshot as proof of credit.</p></div><form id="paymentForm" data-payment-token="'+esc(token)+'" class="item"><label for="paymentReference"><strong>UPI UTR / transaction reference</strong></label><input id="paymentReference" name="reference" type="text" inputmode="text" autocomplete="off" minlength="6" maxlength="80" pattern="[A-Za-z0-9-]{6,80}" required style="display:block;width:100%;box-sizing:border-box;padding:13px;margin:10px 0;border:1px solid #d9cdbd;border-radius:8px;font-size:16px"><button id="submitPayment" type="submit" style="width:100%;padding:14px;border:0;border-radius:8px;background:#302016;color:#fff;font-weight:700">I have paid – submit UTR</button><p id="paymentMessage" class="hint" role="status" aria-live="polite"></p></form></section><footer class="foot">MistBean Coffee · Payment is complete only after bank verification.</footer></main><script src="/payment.js" defer></script></body></html>';
+    return new Response(html,{status:200,headers:{...SECURITY_HEADERS,'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'no-referrer'}});
+  }
   if (method === 'GET' && path === '/api/health') return json({ok:true, service:'mistbean-api', time:now()});
-  if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env), whatsappMode:env.WHATSAPP_MODE || 'mock'});
+  if (method === 'GET' && path === '/api/content') return json({brandName:env.BUSINESS_NAME || 'MistBean Coffee', products:await getProducts(env)});
+  const paymentSubmissionMatch = path.match(/^\/api\/payment-submissions\/([A-Za-z0-9_-]{40,50})$/);
+  if (paymentSubmissionMatch && method === 'POST') {
+    if (!await allowPaymentSubmissionRequest(request,env)) return fail('Too many payment submissions. Please try again shortly.',429);
+    if (!request.headers.get('content-type')?.toLowerCase().includes('application/json')) return fail('Content-Type must be application/json.',415);
+    const rawBody = await request.text();
+    if (rawBody.length > 2048) return fail('Payment submission is too large.',413);
+    let body; try { body = JSON.parse(rawBody); } catch { return fail('Invalid JSON.'); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Invalid payment submission.');
+    const reference = clean(body.reference,80).replace(/\s+/g,'').toUpperCase();
+    if (!/^[A-Z0-9-]{6,80}$/.test(reference)) return fail('Enter a valid UPI UTR or transaction reference (6–80 letters/numbers).');
+    const token = paymentSubmissionMatch[1];
+    const order = await paymentOrderByToken(env,token);
+    if (!order) return fail('Payment link not found.',404);
+    if (order.status !== 'CONFIRMED' || order.payment_status !== 'UNPAID' || !Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) {
+      return fail('This order is not currently accepting payment submissions. Refresh the payment page or contact MistBean.',409);
+    }
+    const submittedAt = now();
+    const updated = await env.DB.prepare(`UPDATE orders
+      SET payment_status='PAYMENT_SUBMITTED',payment_submitted_reference=?,payment_submitted_amount=?,payment_submitted_at=?,updated_at=?
+      WHERE pay_token_hash=? AND status='CONFIRMED' AND payment_status='UNPAID'`)
+      .bind(reference,Number(order.payable_paise)/100,submittedAt,submittedAt,await sha256(token)).run();
+    if (!(updated?.meta?.changes > 0)) return fail('Payment details were already submitted or this order is no longer payable. Refresh the page.',409);
+    await audit(env,'CUSTOMER_PAYMENT_SUBMITTED',order.id,'customer_payment_link',{amount:Number(order.payable_paise)/100});
+    return json({ok:true,message:'Payment details received. MistBean will verify the bank credit. Please do not pay again.'});
+  }
   if (method === 'POST' && path === '/api/orders') {
     const ipHash=await sha256(request.headers.get('cf-connecting-ip')||'unknown');
     await env.DB.prepare("DELETE FROM rate_limits WHERE julianday(created_at) < julianday('now','-1 day')").run();
@@ -223,17 +317,21 @@ async function api(request, env) {
     if(![250,500,1000].includes(pack) || !Number.isInteger(qty) || qty<1 || qty>20) return fail('Invalid pack size or quantity.');
     if(!['Whole beans','Ground coffee'].includes(grind)) return fail('Invalid coffee form.');
     if(productId==='blend') { const parts=blend.split('/').map(Number); if(!/^\d{1,3}\/\d{1,3}$/.test(blend) || parts[0]>100 || parts[1]>100 || parts[0]+parts[1]!==100) return fail('Please provide a blend ratio that totals 100%.'); }
-    const product=await env.DB.prepare('SELECT id,name,price_250,price_500,price_1000,active FROM products WHERE id=?').bind(productId).first();
-    if(!product || !product.active) return fail('This coffee is currently unavailable.',409);
+    const product=await env.DB.prepare('SELECT id,name,price_250,price_500,price_1000,active,in_stock FROM products WHERE id=?').bind(productId).first();
+    if(!product || !product.active || !product.in_stock) return fail('This coffee is currently out of stock. Please choose another product.',409);
     const unit=pack===250?product.price_250:pack===500?product.price_500:product.price_1000;
     const subtotal=unit*qty; const id=uuid(); const ref=orderRef();
     const optIn=body.whatsappOptIn===true?1:0;
-    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,total_amount,customer_whatsapp_opt_in)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,subtotal,optIn).run();
+    const customerId=uuid(), accountRef=`MB-C-${uuid().slice(0,8).toUpperCase()}`, timestamp=now();
+    await env.DB.prepare(`INSERT INTO customers(id,account_ref,phone,display_name,updated_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(phone) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at`).bind(customerId,accountRef,phone,name,timestamp).run();
+    const customer=await env.DB.prepare('SELECT id,account_ref FROM customers WHERE phone=?').bind(phone).first();
+    const deliveryCharge=1, totalAmount=subtotal+deliveryCharge;
+    await env.DB.prepare(`INSERT INTO orders(id,order_ref,customer_id,customer_account_ref,customer_name,customer_phone,delivery_address,pin_code,product_id,product_name,pack_grams,quantity,grind_preference,blend_ratio,notes,unit_price,subtotal,delivery_charge,total_amount,status,payment_status,customer_whatsapp_opt_in,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING','UNPAID',?,?)`).bind(id,ref,customer.id,customer.account_ref,name,phone,address,pin,product.id,product.name,pack,qty,grind,productId==='blend'?blend:null,notes,unit,subtotal,deliveryCharge,totalAmount,optIn,timestamp).run();
     const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-    await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref});
-    if(optIn) await notifyCustomer(env,order,env.WHATSAPP_TEMPLATE_ORDER_RECEIVED,[name,ref,product.name,`${pack}g x ${qty}`,`INR ${subtotal}`]);
-    return json({ok:true,orderRef:ref,status:'PENDING',subtotal,deliveryCharge:null,totalAmount:null,message:'Order received. MistBean will confirm availability and delivery charges.'},201);
+    await audit(env,'ORDER_CREATED',id,'customer',{orderRef:ref,deliveryCharge,totalAmount});
+    return json({ok:true,orderRef:ref,status:'PENDING',paymentStatus:'UNPAID',subtotal,deliveryCharge,totalAmount,message:'Order received. MistBean will review it and send payment instructions.'},201);
   }
   if (path === '/api/webhooks/whatsapp' && method === 'GET') {
     const mode=url.searchParams.get('hub.mode'), token=url.searchParams.get('hub.verify_token'), challenge=url.searchParams.get('hub.challenge');
@@ -261,41 +359,31 @@ async function api(request, env) {
       const origin=request.headers.get('origin');
       if(origin && origin!==url.origin) return fail('Cross-origin request blocked.',403);
     }
-    if(path==='/api/admin/login' && method==='POST') {
-      const ipHash=await sha256(request.headers.get('cf-connecting-ip')||'unknown');
-      await env.DB.prepare("DELETE FROM admin_login_attempts WHERE julianday(created_at) < julianday('now','-1 day')").run();
-      const attempts=await env.DB.prepare("SELECT COUNT(*) AS n FROM admin_login_attempts WHERE ip_hash=? AND julianday(created_at) > julianday('now','-15 minutes')").bind(ipHash).first();
-      if((attempts?.n||0)>=5) return fail('Too many login attempts. Try again in 15 minutes.',429);
-      await env.DB.prepare('INSERT INTO admin_login_attempts(ip_hash) VALUES(?)').bind(ipHash).run();
-      let body;try{body=await request.json();}catch{return fail('Invalid JSON.');}
-      if(clean(body.email,150).toLowerCase()!==String(env.ADMIN_EMAIL||'').toLowerCase() || !await verifyPassword(String(body.password||''),env.ADMIN_PASSWORD_HASH)) return fail('Invalid email or password.',401);
-      if(!env.SESSION_SECRET || env.SESSION_SECRET.length<32) return fail('Admin session secret is not configured securely.',503);
-      await env.DB.prepare('DELETE FROM admin_login_attempts WHERE ip_hash=?').bind(ipHash).run();
-      const token=await createSession(env,env.ADMIN_EMAIL);
-      return json({ok:true,expiresIn:28800},200,{'set-cookie':sessionCookie(token)});
-    }
-    const actor=await adminFromRequest(request,env); if(!actor) return fail('Authentication required.',401);
+    const actor = adminIdentity?.email;
+    if (!actor) return fail('Authentication required.',401);
     if(path==='/api/admin/logout' && method==='POST') {
       const token=sessionToken(request);
       if(token) await env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(await sha256(token)).run();
-      return json({ok:true},200,{'set-cookie':sessionCookie('',0)});
-    }
-    const qrMatch=path.match(/^\/api\/admin\/orders\/([\w-]+)\/payment-qr$/);
-    if(qrMatch && method==='GET') {
-      const order=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(qrMatch[1]).first();
-      if(!order) return fail('Order not found.',404);
-      if(order.status!=='CONFIRMED' || order.payment_status==='PAID') return fail('QR is available only for confirmed unpaid orders.',409);
-      let upiUri; try { upiUri=makeUpiUri(env,order); } catch(e) { return fail(e.message,400); }
-      // QR provider receives UPI ID, payee name, amount and order reference.
-      const imageUrl=`https://api.qrserver.com/v1/create-qr-code/?size=640x640&format=png&data=${encodeURIComponent(upiUri)}`;
-      const image=await fetch(imageUrl,{headers:{accept:'image/png'}});
-      if(!image.ok) return fail('QR image service is temporarily unavailable.',502);
-      return new Response(image.body,{headers:{...SECURITY_HEADERS,'content-type':'image/png','content-disposition':`attachment; filename="mistbean-${order.order_ref}-upi-qr.png"`,'cache-control':'no-store'}});
+      return json({ok:true},200,{'set-cookie':sessionCookie('',0,url.protocol==='https:')});
     }
     if(path==='/api/admin/orders' && method==='GET') {
       const status=url.searchParams.get('status');
       const rows=status?await env.DB.prepare('SELECT * FROM orders WHERE status=? ORDER BY created_at DESC LIMIT 200').bind(status).all():await env.DB.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200').all();
       return json({orders:rows.results||[]});
+    }
+    if(path==='/api/admin/products' && method==='GET') {
+      const rows=await env.DB.prepare('SELECT id,name,description,active,in_stock,price_250,price_500,price_1000 FROM products ORDER BY name').all();
+      return json({products:(rows.results||[]).map(p=>({...p,in_stock:Boolean(p.in_stock)}))});
+    }
+    const stockMatch=path.match(/^\/api\/admin\/products\/([a-z0-9_-]+)\/stock$/i);
+    if(stockMatch && method==='PATCH') {
+      let body;try{body=await request.json();}catch{return fail('Invalid JSON.');}
+      if(typeof body.inStock!=='boolean')return fail('Choose Available or Out of stock.');
+      const product=await env.DB.prepare('SELECT id,name FROM products WHERE id=?').bind(stockMatch[1]).first();
+      if(!product)return fail('Product not found.',404);
+      await env.DB.prepare('UPDATE products SET in_stock=?,updated_at=? WHERE id=?').bind(body.inStock?1:0,now(),product.id).run();
+      await audit(env,body.inStock?'PRODUCT_STOCK_AVAILABLE':'PRODUCT_MARKED_OUT_OF_STOCK',null,actor,{productId:product.id,productName:product.name,inStock:body.inStock});
+      return json({ok:true,product:{...product,inStock:body.inStock}});
     }
     const match=path.match(/^\/api\/admin\/orders\/([\w-]+)\/(confirm|reject|payment|payment-request|dispatch|deliver|invoice|invoice-send|invoice-sent)$/);
     if(match && method==='POST') {
@@ -304,57 +392,99 @@ async function api(request, env) {
       if(action==='confirm'){
         if(order.status!=='PENDING')return fail('Only pending orders can be confirmed.',409);
         const delivery=Math.max(0,Math.min(100000,Math.round(Number(body.deliveryCharge)||0)));
-        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,now(),id).run();
+        const finalTotal=Number(order.subtotal)+delivery;
+        const payablePaise=Math.round(finalTotal*100);
+        if(!Number.isSafeInteger(payablePaise)||payablePaise<1)return fail('The order total is invalid. Please review the order before confirming.',409);
+        await env.DB.prepare("UPDATE orders SET status='CONFIRMED',delivery_charge=?,total_amount=subtotal+?,payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='PENDING'").bind(delivery,delivery,payablePaise,now(),id).run();
         await audit(env,'ORDER_CONFIRMED',id,actor,{deliveryCharge:delivery});
         const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
         // Payment instructions are deliberately sent only after the admin clicks
         // the separate "Send Payment Details" action in the admin panel.
       } else if(action==='payment-request'){
         if(order.status!=='CONFIRMED')return fail('Confirm the order and delivery charge before sending payment details.',409);
-        if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(order.payment_status==='PAID')return fail('This order is already marked as paid.',409);
-        let upiUri; try { upiUri=makeUpiUri(env,order); } catch(e) { return fail(e.message,400); }
-        const qrPath=`/api/admin/orders/${id}/payment-qr`;
+        if(order.payment_status==='PAYMENT_SUBMITTED')return fail('The customer has already submitted payment details. Verify the bank credit before sending another payment request.',409);
+        if(order.payment_status!=='UNPAID')return fail('This order is not currently accepting payment requests.',409);
+        // Normalize older confirmed unpaid orders too: the payable amount is
+        // always exactly the stored order total, with no unique paise suffix.
+        const exactPayablePaise=Math.round(Number(order.total_amount)*100);
+        if(!Number.isSafeInteger(exactPayablePaise)||exactPayablePaise<1)return fail('The confirmed order total is invalid. Review the order before requesting payment.',409);
+        await env.DB.prepare("UPDATE orders SET payable_paise=?,unique_amount_suffix=0,updated_at=? WHERE id=? AND status='CONFIRMED' AND payment_status='UNPAID'").bind(exactPayablePaise,now(),id).run();
+        order.payable_paise=exactPayablePaise;
+        let paymentQrUrl;
+        try {
+          let token;
+          if (order.pay_token_ciphertext && order.pay_token_hash) token = await decryptPaymentToken(order.pay_token_ciphertext,env);
+          else {
+            // Claim token creation once. Concurrent admin clicks must reuse the
+            // persisted token rather than return links that overwrite each other.
+            const candidate = createPaymentToken();
+            await env.DB.prepare('UPDATE orders SET pay_token_hash=?,pay_token_ciphertext=?,updated_at=? WHERE id=? AND pay_token_ciphertext IS NULL')
+              .bind(await sha256(candidate),await encryptPaymentToken(candidate,env),now(),id).run();
+            const persisted = await env.DB.prepare('SELECT pay_token_ciphertext FROM orders WHERE id=? AND pay_token_hash IS NOT NULL AND pay_token_ciphertext IS NOT NULL').bind(id).first();
+            if (!persisted?.pay_token_ciphertext) throw new Error('Payment link could not be created. Please retry.');
+            token = await decryptPaymentToken(persisted.pay_token_ciphertext,env);
+          }
+          paymentQrUrl = `/qr/${encodeURIComponent(token)}.svg`;
+          makeUpiUri(env,{...order,payable_paise:Number(order.payable_paise)});
+        } catch(e) { return fail(e.message, 503); }
+        if (!Number.isSafeInteger(order.payable_paise) || order.payable_paise < 1) return fail('Confirmed payable amount is missing. Reconfirm this order before requesting payment.',409);
         const message=[
-          `☕ *MistBean Coffee – Payment Request*`,
+          `☕ *MISTBEAN COFFEE*`,
+          `*Payment request*`,
           `Hello ${order.customer_name},`,
-          `Your order ${order.order_ref} is confirmed.`,
-          `Product: ${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
-          `Product amount: ₹${order.subtotal}`,
-          `Delivery fee: ₹${order.delivery_charge}`,
-          `*Total payable: ₹${order.total_amount}*`,
-          `UPI ID: ${clean(env.UPI_ID,120)}`,
-          `Pay using this UPI link: ${upiUri}`,
-          `I have included the UPI QR image separately. Please scan the attached image to pay.`,
-          `After paying, please reply here with your UPI transaction reference (UTR). We will verify the credit before dispatch.`,
-          `Thank you, MistBean Coffee`
+          `Your order *${order.order_ref}* is confirmed.`,
+          ``,
+          `*ORDER SUMMARY*`,
+          `${order.product_name} · ${order.pack_grams}g × ${order.quantity}`,
+          `Products: ₹${order.subtotal}`,
+          `Delivery: ₹${order.delivery_charge}`,
+          `*AMOUNT TO PAY: ₹${formatPaise(order.payable_paise)}*`,
+          ``,
+          `*PAYMENT*`,
+          `Please scan the attached MistBean payment QR image to pay exactly ₹${formatPaise(order.payable_paise)}.`,
+          `After payment, share your UPI UTR/reference here. We will verify the payment before dispatch.`,
+          `Please do not pay a different amount.`,
+          ``,
+          `Thank you for choosing MistBean Coffee.`
         ].join('\n');
-        if(env.WHATSAPP_MODE==='meta') {
-          try {
-            const sent=await sendPaymentQrTemplate(env,order,upiUri);
-            await env.DB.prepare('UPDATE orders SET payment_details_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
-            await audit(env,'PAYMENT_DETAILS_SENT_WITH_QR',id,actor,{totalAmount:order.total_amount,whatsappMessageId:sent.messages?.[0]?.id||null});
-            return json({ok:true,sent:true,sentVia:'whatsapp-cloud-api',qrAttached:true,totalAmount:order.total_amount});
-          } catch(e) { console.error('WhatsApp payment QR send failed',e.message); return fail(`WhatsApp could not send the payment QR: ${e.message}`,502); }
-        }
-        const manualMessage=message.replace('I have included the UPI QR image separately. Please scan the attached image to pay.','Please scan the UPI QR image attached to this WhatsApp message, or use the UPI link above.');
-        const chatUrl=whatsappChatUrl(order.customer_phone,manualMessage);
-        await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:order.total_amount});
-        return json({ok:true,whatsappUrl:chatUrl,upiUri,qrPath,totalAmount:order.total_amount,manualAttachmentRequired:true});
+        const chatUrl=whatsappChatUrl(order.customer_phone,message);
+        await audit(env,'PAYMENT_DETAILS_PREPARED_MANUAL',id,actor,{totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
+        await env.DB.prepare('UPDATE orders SET payment_request_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run();
+        return json({ok:true,whatsappUrl:chatUrl,qrUrl:paymentQrUrl,totalAmount:Number(order.payable_paise||order.total_amount*100)/100});
       } else if(action==='reject'){
         if(order.status!=='PENDING')return fail('Only pending orders can be rejected.',409);
         const reason=clean(body.reason,300); if(!reason)return fail('Please provide a rejection reason.');
         await env.DB.prepare("UPDATE orders SET status='REJECTED',rejection_reason=?,updated_at=? WHERE id=? AND status='PENDING'").bind(reason,now(),id).run();
         await audit(env,'ORDER_REJECTED',id,actor,{reason});
-        const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,'REJECTED',reason]);
       } else if(action==='payment'){
         if(body.status!=='PAID')return fail('Payment status must be PAID.');
         if(order.status!=='CONFIRMED')return fail('Confirm the order before verifying payment.',409);
         const reference=clean(body.reference,80);
         if(reference.length<6)return fail('Enter the UPI transaction reference / UTR (at least 6 characters).');
         if(order.payment_status==='PAID')return fail('Payment is already verified.',409);
-        await env.DB.prepare("UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,updated_at=? WHERE id=?").bind(reference,now(),now(),id).run();
-        await audit(env,'PAYMENT_VERIFIED',id,actor,{reference});
+        const verifiedAt=now(), paymentId=uuid();
+        const amountPaise=Number(order.payable_paise||Math.round(Number(order.total_amount)*100));
+        try {
+          const results=await env.DB.batch([
+            env.DB.prepare('INSERT INTO payments(id,order_id,utr,amount_paise,source) VALUES(?,?,?,?,?)').bind(paymentId,id,reference.toUpperCase(),amountPaise,'manual'),
+            env.DB.prepare(`INSERT INTO customer_payments(id,customer_id,order_id,amount,currency,payment_method,payment_reference,verified_by,verified_at)
+              SELECT ?,customer_id,id,?,'INR','UPI',?,?,? FROM orders
+              WHERE id=? AND status='CONFIRMED' AND payment_status<>'PAID'`).bind(uuid(),amountPaise/100,reference,actor,verifiedAt,id),
+            env.DB.prepare(`UPDATE orders SET payment_status='PAID',payment_reference=?,payment_verified_at=?,paid_at=?,updated_at=?
+              WHERE id=? AND payment_status<>'PAID' AND EXISTS(SELECT 1 FROM customer_payments WHERE order_id=orders.id AND payment_reference=? AND verified_at=?)`).bind(reference,verifiedAt,verifiedAt,verifiedAt,id,reference,verifiedAt)
+          ]);
+          if(!(results?.[0]?.meta?.changes>0) || !(results?.[1]?.meta?.changes>0) || !(results?.[2]?.meta?.changes>0)) return fail('Payment was already verified or the order changed. Refresh and check payment history.',409);
+        } catch(e) { return fail('This UTR may already be recorded. Check the payment ledger before retrying.',409); }
+        await audit(env,'PAYMENT_VERIFIED',id,actor,{reference,amount:order.total_amount});
+        const paidOrder=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
+        try {
+          const invoice=await createInvoice(env,paidOrder,actor);
+          await audit(env,'INVOICE_AUTO_GENERATED',id,actor,{invoiceNumber:invoice.invoiceNumber,customerAccountRef:paidOrder.customer_account_ref});
+        } catch(invoiceError) {
+          console.error('Automatic invoice generation failed',invoiceError.message);
+          await audit(env,'INVOICE_AUTO_GENERATION_FAILED',id,actor,{reason:clean(invoiceError.message,200)});
+        }
       } else if(action==='dispatch' || action==='deliver'){
         const status=action==='dispatch'?'DISPATCHED':'DELIVERED';
         if(action==='dispatch' && order.status!=='CONFIRMED')return fail('Only confirmed orders can be dispatched.',409);
@@ -362,34 +492,48 @@ async function api(request, env) {
         if(order.payment_status!=='PAID')return fail('Verify payment before fulfilment status changes.',409);
         if(action==='dispatch' && !order.invoice_key)return fail('Generate the invoice before dispatching this order.',409);
         if(action==='dispatch' && !order.invoice_sent_at)return fail('Mark the invoice as sent on WhatsApp before dispatching this order.',409);
-        if(action==='dispatch' && !order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
         if(action==='dispatch'){
           const courier=clean(body.courierName,80), tracking=clean(body.trackingId,100);
           await env.DB.prepare('UPDATE orders SET status=?,courier_name=?,tracking_id=?,updated_at=? WHERE id=?').bind(status,courier||null,tracking||null,now(),id).run();
           await audit(env,`ORDER_${status}`,id,actor,{courierName:courier,trackingId:tracking});
           const message=[`☕ *MistBean Coffee – Order Dispatched*`,`Hello ${order.customer_name},`,`Your order ${order.order_ref} has been dispatched.`,`Invoice: ${order.invoice_number}`,courier?`Courier: ${courier}`:'',tracking?`Tracking ID: ${tracking}`:'',`Thank you for choosing MistBean Coffee!`].filter(Boolean).join('\n');
           const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
-          if(env.WHATSAPP_MODE!=='meta')return json({ok:true,order:fresh,whatsappUrl:whatsappChatUrl(fresh.customer_phone,message),manualAttachmentRequired:true});
-          await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`Invoice ${fresh.invoice_number}. ${courier?`Courier ${courier}. `:''}${tracking?`Tracking ${tracking}`:''}`]);
+          return json({ok:true,order:fresh,whatsappUrl:whatsappChatUrl(fresh.customer_phone,message),message,manualSendRequired:true});
         } else {
           await env.DB.prepare('UPDATE orders SET status=?,updated_at=? WHERE id=?').bind(status,now(),id).run(); await audit(env,`ORDER_${status}`,id,actor,{});
-          const fresh=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first(); await notifyCustomer(env,fresh,env.WHATSAPP_TEMPLATE_ORDER_UPDATE,[fresh.customer_name,fresh.order_ref,status,`INR ${fresh.total_amount}`]);
         }
       } else if(action==='invoice'){
-        try { await createInvoice(env,order,actor); } catch(e){return fail(e.message,409);}
+        if(order.payment_status!=='PAID')return fail('Verify payment before generating the invoice.',409);
+        let invoice;
+        try { invoice = await createInvoice(env,order,actor); } catch(e){return fail(e.message,409);}
+        const invoiceOrder = await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(id).first();
+        const message=[
+          `☕ *MISTBEAN COFFEE*`,
+          `*Invoice ready*`,
+          `Hello ${invoiceOrder.customer_name},`,
+          `Your invoice *${invoiceOrder.invoice_number}* for order *${invoiceOrder.order_ref}* is ready.`,
+          `*Amount paid: ₹${invoiceOrder.total_amount}*`,
+          `Please attach the invoice PDF before sending this message.`,
+          `Thank you for choosing MistBean Coffee.`
+        ].join('\\n');
+        await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
+        const whatsappUrl=whatsappChatUrl(invoiceOrder.customer_phone,message);
+        return json({ok:true,order:invoiceOrder,whatsappUrl,message,manualAttachmentRequired:true});
       } else if(action==='invoice-send'){
         if(!order.invoice_key)return fail('Generate the invoice first.',409);
-        if(!order.customer_whatsapp_opt_in)return fail('Customer has not opted in to WhatsApp order updates.',409);
-        if(order.payment_status!=='PAID')return fail('Verify payment before sending the invoice.',409);
-        if(env.WHATSAPP_MODE==='meta'){
-          try { await sendInvoiceWhatsApp(env,order,order.invoice_key); await env.DB.prepare('UPDATE orders SET invoice_sent_at=?,updated_at=? WHERE id=?').bind(now(),now(),id).run(); await audit(env,'INVOICE_SENT',id,actor,{mode:'meta'}); }
-          catch(e){return fail(e.message,502);}
-        } else {
-          const message=[`☕ *MistBean Coffee – Invoice*`,`Hello ${order.customer_name},`,`Your invoice ${order.invoice_number} for order ${order.order_ref} is ready.`,`Total paid: ₹${order.total_amount}.`,`Please find the invoice PDF attached to this WhatsApp message.`,`Thank you for choosing MistBean Coffee!`].join('\n');
-          const chatUrl=whatsappChatUrl(order.customer_phone,message);
-          await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
-          return json({ok:true,whatsappUrl:chatUrl,manualAttachmentRequired:true});
-        }
+        if(order.payment_status!=='PAID')return fail('Verify payment before preparing the invoice message.',409);
+        const message=[
+          `☕ *MISTBEAN COFFEE*`,
+          `*Invoice ready*`,
+          `Hello ${order.customer_name},`,
+          `Your invoice *${order.invoice_number}* for order *${order.order_ref}* is ready.`,
+          `*Amount paid: ₹${order.total_amount}*`,
+          `Please attach the invoice PDF before sending this message.`,
+          `Thank you for choosing MistBean Coffee.`
+        ].join('\\n');
+        const chatUrl=whatsappChatUrl(order.customer_phone,message);
+        await audit(env,'INVOICE_WHATSAPP_PREPARED',id,actor,{mode:'manual'});
+        return json({ok:true,whatsappUrl:chatUrl,message,manualAttachmentRequired:true});
       } else if(action==='invoice-sent'){
         if(!order.invoice_key)return fail('Generate the invoice first.',409);
         if(order.payment_status!=='PAID')return fail('Verify payment before recording invoice delivery.',409);
@@ -413,8 +557,22 @@ async function api(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url=new URL(request.url);
-    if(url.pathname.startsWith('/api/')) {
-      try { return await api(request,env); }
+    const isAdminApi = url.pathname.startsWith('/api/admin/');
+    const isAdminPage = url.pathname === '/admin' || url.pathname.startsWith('/admin/');
+    let adminIdentity = null;
+
+    if (isAdminApi || isAdminPage) {
+      adminIdentity = await verifyAccess(request, env);
+      if (!adminIdentity) {
+        return new Response('Authentication required.', {
+          status: 401,
+          headers: { ...SECURITY_HEADERS, 'cache-control': 'no-store' }
+        });
+      }
+    }
+
+    if(url.pathname.startsWith('/api/') || url.pathname.startsWith('/pay/') || url.pathname.startsWith('/qr/')) {
+      try { return await api(request,env,adminIdentity); }
       catch(error){ console.error('API error',error); return fail('An unexpected server error occurred.',500); }
     }
     const assetResponse=await env.ASSETS.fetch(request);

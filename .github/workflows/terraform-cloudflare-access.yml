@@ -1,0 +1,56 @@
+name: Terraform - Cloudflare Staging Access
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/direct-upi-payment
+    paths:
+      - "infrastructure/cloudflare-access/**"
+      - ".github/workflows/terraform-cloudflare-access.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Validate and plan (no apply)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/cloudflare-access
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.3
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize
+        run: terraform init -input=false
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Import existing staging Access application into temporary CI state
+        env:
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$TF_VAR_cloudflare_api_token" ]; then
+            echo "::error::Add CLOUDFLARE_API_TOKEN to GitHub Actions secrets."
+            exit 1
+          fi
+          terraform import -input=false \
+            cloudflare_zero_trust_access_application.admin_staging \
+            "accounts/b10e02a0d49aa9fd57d366ccf73242ed/52bc9d38-18fc-4113-b2d9-8caa2ca6dd94"
+
+      - name: Create read-only plan
+        env:
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: terraform plan -input=false -no-color
